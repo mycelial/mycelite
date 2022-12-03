@@ -1,0 +1,17 @@
+[package]
+name = "mycelite"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libsqlite-sys = { path = "../libsqlite-sys" }
+journal = { path = "../journal" }
+
+# replicator
+ureq = { version = "2.5" }

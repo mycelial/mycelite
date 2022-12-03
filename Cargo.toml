@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "block",
+    "block_macro",
+    "journal",
+    "libsqlite-sys",
+    "mycelite",
+]
