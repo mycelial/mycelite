@@ -1,0 +1,16 @@
+[package]
+name = "sync-backend"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libsqlite-sys = { path = "../../libsqlite-sys" }
+journal = { path = "../../journal" }
+
+tokio = { version = "1", features = ["full"] }
+axum  = { version = "0.6", features = ["headers"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = { version = "0.3" }
+tokio-util = { version = "0.7", features = ["io"] }
