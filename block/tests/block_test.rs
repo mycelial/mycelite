@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test {
-    use block_macro::*;
     use block::Block;
+    use block_macro::*;
 
     #[block(512)]
     struct S {}

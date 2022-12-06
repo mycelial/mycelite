@@ -120,7 +120,7 @@ impl MclVFSFile {
         ));
         let url = std::env::var("MYCELIAL_SYNC_BACKEND").unwrap_or("http://localhost:8080".into());
         self.replicator = Some(std::mem::ManuallyDrop::new(
-            replicator::Replicator::new(url, &journal_path, database_path).spawn(),
+            replicator::Replicator::new(url, &journal_path, database_path, self.read_only).spawn()
         ));
         Ok(())
     }
@@ -288,7 +288,7 @@ unsafe extern "C" fn mvfs_io_write(
 ) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
     if file.read_only {
-        return ffi::SQLITE_READONLY
+        return ffi::SQLITE_READONLY;
     }
     let result = file.journal.as_mut().map(|journal| {
         journal.add_page(

@@ -24,14 +24,21 @@ pub struct Replicator {
     url: String,
     database_path: String,
     journal: Journal,
+    read_only: bool,
 }
 
 impl Replicator {
-    pub fn new<P: AsRef<Path>>(url: String, journal_path: P, database_path: String) -> Self {
+    pub fn new<P: AsRef<Path>>(
+        url: String,
+        journal_path: P,
+        database_path: String,
+        read_only: bool,
+    ) -> Self {
         Self {
             url,
             journal: Journal::try_from(journal_path).unwrap(),
             database_path,
+            read_only,
         }
     }
 
@@ -39,10 +46,16 @@ impl Replicator {
         let (local_loop_tx, mut local_loop_rx) = channel();
         let (remote_loop_tx, mut remote_loop_rx) = channel();
         let (mut local_loop_clone, url_clone) = (local_loop_tx.clone(), self.url.clone());
-        let local_loop_h = std::thread::spawn(move || self.enter_local_loop(&mut local_loop_rx));
-        let remote_loop_h = std::thread::spawn(move || {
-            Self::enter_remote_loop(&mut local_loop_clone, &mut remote_loop_rx, &url_clone)
-        });
+        let read_only = self.read_only;
+        let local_loop_h = Some(std::thread::spawn(move || {
+            self.enter_local_loop(&mut local_loop_rx)
+        }));
+        let remote_loop_h = match !read_only {
+            true => None,
+            false => Some(std::thread::spawn(move || {
+                Self::enter_remote_loop(&mut local_loop_clone, &mut remote_loop_rx, &url_clone)
+            })),
+        };
         ReplicatorHandle::new(local_loop_tx, remote_loop_tx, local_loop_h, remote_loop_h)
     }
 
@@ -59,7 +72,9 @@ impl Replicator {
                 Ok(Message::Quit) => return,
                 Ok(Message::NewLocalSnapshot) => (),
                 Ok(Message::NewRemoteSnapshot) => match self.maybe_pull_snapshots() {
-                    Ok((last, new)) if last < new => { self.restore_latest_snapshot().ok(); },
+                    Ok((last, new)) if last < new => {
+                        self.restore_latest_snapshot().ok();
+                    }
                     Ok(_) => (),
                     Err(_e) => (),
                 },
@@ -220,14 +235,14 @@ impl ReplicatorHandle {
     fn new(
         local_loop_tx: Sender<Message>,
         remote_loop_tx: Sender<Message>,
-        local_loop: JoinHandle<()>,
-        remote_loop: JoinHandle<()>,
+        local_loop: Option<JoinHandle<()>>,
+        remote_loop: Option<JoinHandle<()>>,
     ) -> Self {
         Self {
             local_loop_tx,
             remote_loop_tx,
-            local_loop: Some(local_loop),
-            remote_loop: Some(remote_loop),
+            local_loop,
+            remote_loop,
         }
     }
 
