@@ -2,7 +2,7 @@
 
 ## What is Mycelite?
 
-Mycelite is an SQLite extension that allows you to synchronize changes from one
+Mycelite is a SQLite extension that allows you to synchronize changes from one
 instance of SQLite to another. Currently, it only supports one-way
 synchronization, but eventually, it will support two-way synchronization.
 
@@ -10,7 +10,7 @@ Why would you want to synchronize multiple SQLite databases? Read on to learn.
 
 ### A new type of application
 
-There is a new type of application called local-first, which combines many of 
+There is a new type of application called local-first, which combines many of
 the best features from both local and client/server applications.
 
 ### What does local-first offer?
@@ -25,15 +25,15 @@ A good example of a local-first application is [Actual
 budget](https://github.com/actualbudget/actual), an open-source personal finance
 application.
 
-What makes Actual budget different from its competitors?
+What makes Actual Budget different from its competitors?
 
 First of all, it's very fast because all the application data is on the local
-device, in an SQLite database, but what's most interesting about this app is
-that it works on multiple devices. In other words, it has apps for IOS, Android,
+device - in a SQLite database - but what's most interesting about this app is
+that it works on multiple devices. In other words, it has apps for iOS, Android,
 Windows, Mac and the Web and it allows you to make concurrent changes on
 multiple devices and synchronize those changes to all your devices.
 
-### Why aren't more developers creating local-first applications
+### Why aren't more developers creating local-first applications?
 
 Actual budget is a good example of a local-first application, but it wasn't very
 easy to build. The Authors had to write a bunch of synchronization-related code,
@@ -47,13 +47,13 @@ change that.
 
 ### Prerequisites
 
-[Install Rust](https://www.rust-lang.org/tools/install). 
+[Install Rust](https://www.rust-lang.org/tools/install).
 The version of Rust must be >= 1.65.
 
-Install a recent version of SQLite. The default version of SQLite that comes 
-preinstalled may not support extensions.  [Brew](https://formulae.brew.sh/formula/sqlite)
+Install a recent version of SQLite. The default version of SQLite that comes
+preinstalled may not support extensions. [Brew](https://formulae.brew.sh/formula/sqlite)
 will install an appropriate build of SQLite.
-*Note: you may need to modify your **$PATH**. Pay close attention to brew's PATH instruction*
+_Note: you may need to modify your **$PATH**. Pay close attention to brew's PATH instruction_
 
 ### Building Mycelite
 
@@ -71,7 +71,7 @@ This will create a shared library in `./target/release/libmycelite.dylib`.
 
 #### Replicator
 
-Start the replicator service with the following terminal command: 
+Start the replicator service with the following terminal command:
 
 ```bash
 cd mycelite/examples
@@ -80,7 +80,7 @@ cd cargo run -p sync-backend
 
 #### SQLite Writer
 
-In a new terminal, start an SQLite writer instance with the following command: 
+In a new terminal, start an SQLite writer instance with the following command:
 
 ```
 cd mycelite
@@ -97,14 +97,14 @@ following commands:
 
 #### SQLite Reader
 
-In a new terminal, start an SQLite reader instance with the following command:
+In a new terminal, start a SQLite reader instance with the following command:
 
 ```bash
 cd mycelite
 MYCELIAL_WRITER=false sqlite3
 ```
 
-After SQLites CLI opens, load the extension and open the database with the
+After SQLite's CLI opens, load the extension and open the database with the
 following commands:
 
 ```
@@ -121,13 +121,14 @@ create table test(int);
 insert into test values (42);
 ```
 
-Now in the reader instance, you will see the new table and you can query it's
+Now in the reader instance, you will see the new table and you can query its
 values. For example:
 
 ```sql
 .tables
-select * from test;
+select * from test; -- # returns 42
 ```
 
 ## License
+
 Apache 2.0
