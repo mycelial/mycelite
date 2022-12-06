@@ -30,7 +30,7 @@ static mut MclVFS: MclVFS = MclVFS {
         // initialized on extention load
         mxPathname: 0,
         pNext: ptr::null_mut(),
-        zName: c_str!("mvfs"),
+        zName: c_str!("mycelite"),
         pAppData: ptr::null_mut(),
         xOpen: Some(mvfs_open),
         xDelete: Some(mvfs_delete),
@@ -384,6 +384,6 @@ pub unsafe fn sqlite3_mycelite_init(
     );
     (&*SQLITE3_API)
         .vfs_register
-        .map(|f| f(MclVFS::as_base(), 0));
+        .map(|f| f(MclVFS::as_base(), 1));
     ffi::SQLITE_OK_LOAD_PERMANENTLY
 }
