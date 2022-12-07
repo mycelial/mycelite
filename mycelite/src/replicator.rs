@@ -160,13 +160,10 @@ impl Replicator {
             v => return Ok((local_snapshot_id, v)),
         };
 
-        let snapshot_path = match local_snapshot_id {
-            Some(v) => format!("?snapshot-id={}", v),
-            None => "".into(),
-        };
-        let url = &format!("{}/api/v0/snapshots{}", self.url, snapshot_path);
+        let url = &format!("{}/api/v0/snapshots", self.url);
         let res = ureq::get(url)
             .set("x-mcl-to", "domain@mycelial.com")
+            .query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string())
             .call()?;
 
         let mut reader = res.into_reader();
