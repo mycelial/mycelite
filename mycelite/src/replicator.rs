@@ -86,7 +86,7 @@ impl Replicator {
     ///
     /// just dumbly polls remote backend and bothers main thread. A lot.
     fn enter_remote_loop(tx: &mut Sender<Message>, rx: &mut Receiver<Message>, url: &str) {
-        let url = &format!("{}/snapshot", url);
+        let url = &format!("{}/api/v0/snapshots", url);
         loop {
             if let Ok(v) = Self::get_backend_current_snapshot(url) {
                 tx.send(Message::NewRemoteSnapshot).ok();
@@ -107,7 +107,7 @@ impl Replicator {
             None => return Ok(()),
             Some(v) => v,
         };
-        let url = &format!("{}/snapshot", self.url);
+        let url = &format!("{}/api/v0/snapshots", self.url);
         let remote_snapshot_id = match Self::get_backend_current_snapshot(url) {
             Ok(Some(v)) if v >= local_snapshot_id => {
                 // up to date, maybe some new stuff, but poller will take care of that
@@ -143,7 +143,9 @@ impl Replicator {
             buf.extend(page);
         }
         // FIXME: status code are not checked
-        ureq::post(url).send_bytes(&buf)?;
+        ureq::post(url)
+            .set("x-mcl-to", "domain@mycelial.com")
+            .send_bytes(&buf)?;
         Ok(())
     }
 
@@ -152,18 +154,21 @@ impl Replicator {
         &mut self,
     ) -> Result<(Option<u64>, Option<u64>), Box<dyn std::error::Error>> {
         let local_snapshot_id = self.journal.current_snapshot();
-        let url = &format!("{}/snapshot", self.url);
+        let url = &format!("{}/api/v0/snapshots", self.url);
         match Self::get_backend_current_snapshot(url)? {
             Some(v) if local_snapshot_id < Some(v) => (),
             v => return Ok((local_snapshot_id, v)),
         };
 
         let snapshot_path = match local_snapshot_id {
-            Some(v) => format!("/{}", v),
+            Some(v) => format!("?snapshot-id={}", v),
             None => "".into(),
         };
-        let url = &format!("{}/snapshot{}", self.url, snapshot_path);
-        let res = ureq::get(url).call()?;
+        let url = &format!("{}/api/v0/snapshots{}", self.url, snapshot_path);
+        let res = ureq::get(url)
+            .set("x-mcl-to", "domain@mycelial.com")
+            .call()?;
+
         let mut reader = res.into_reader();
         while let Ok(snapshot_header) = de::from_reader::<SnapshotHeader, _>(&mut reader) {
             while let Ok(page_header) = de::from_reader::<PageHeader, _>(&mut reader) {
@@ -204,8 +209,10 @@ impl Replicator {
     /// Fetch last snapshot id seen by sync backend
     fn get_backend_current_snapshot(url: &str) -> Result<Option<u64>, Box<dyn std::error::Error>> {
         let res = ureq::head(url)
+            .set("x-mcl-to", "domain@mycelial.com")
             .timeout(std::time::Duration::from_secs(5))
             .call()?;
+
         match res.header("x-snapshot-id") {
             Some(value) if value.len() == 0 => Ok(None),
             Some(value) => Ok(Some(value.parse()?)),
