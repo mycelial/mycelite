@@ -18,7 +18,7 @@
 //! ```
 
 use axum::{
-    extract::{BodyStream, Path, State},
+    extract::{BodyStream, Path, State, Query},
     response,
     routing::{get, head, post},
     Router, Server,
@@ -29,9 +29,17 @@ use std::io::Read;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use serde::{Deserialize};
 
 fn to_error<T: std::fmt::Debug>(e: T) -> String {
     format!("{:?}", e)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
+struct Params {
+    #[serde(rename="snapshot-id")]
+    snapshot_id: u64,
 }
 
 /// post new journal snapshots
@@ -89,14 +97,15 @@ async fn head_snapshot(
 /// get new snapshots
 async fn get_snapshot(
     State(state): State<AppState>,
+    params: Option<Query<Params>>,
     snapshot_id: Option<Path<u64>>,
 ) -> Result<impl response::IntoResponse, String> {
-    let snapshot_id = snapshot_id.map(|x| x.0);
+    let snapshot_id: u64 = params.unwrap_or_default().snapshot_id;
     let mut journal = state.journal.lock().await;
     let iter = journal
         .into_iter()
         .map(Result::unwrap)
-        .filter(|(snapshot_header, _, _)| snapshot_id <= Some(snapshot_header.num));
+        .filter(|(snapshot_header, _, _)| snapshot_id <= snapshot_header.num);
     let mut last_seen = None;
     let mut buf = vec![];
     for (snapshot_header, page_header, page) in iter {
@@ -141,13 +150,7 @@ async fn main() {
         .init();
 
     let app = Router::new()
-        .route("/snapshot", post(post_snapshot))
-        .route("/snapshot", head(head_snapshot))
-        .route(
-            "/snapshot",
-            get(|state: State<AppState>| get_snapshot(state, None)),
-        )
-        .route("/snapshot/:num", get(get_snapshot))
+        .route("/api/v0/snapshots", get(get_snapshot).head(head_snapshot).post(post_snapshot))
         .with_state(AppState::new());
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
