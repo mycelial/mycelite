@@ -1163,6 +1163,7 @@ dependencies = [
  "futures",
  "journal",
  "libsqlite-sys",
+ "serde",
  "tokio",
  "tokio-util",
  "tracing",

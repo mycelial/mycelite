@@ -385,5 +385,6 @@ pub unsafe fn sqlite3_mycelite_init(
     (&*SQLITE3_API)
         .vfs_register
         .map(|f| f(MclVFS::as_base(), 1));
+
     ffi::SQLITE_OK_LOAD_PERMANENTLY
 }
