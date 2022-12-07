@@ -22,7 +22,7 @@ client/server systems.
 ### What do local-first applications look like?
 
 A good example of a local-first application is [Actual
-budget](https://github.com/actualbudget/actual), an open-source personal finance
+Budget](https://github.com/actualbudget/actual), an open-source personal finance
 application.
 
 What makes Actual Budget different from its competitors?
@@ -51,7 +51,7 @@ change that.
 The version of Rust must be >= 1.65.
 
 Install a recent version of SQLite. The default version of SQLite that comes
-preinstalled may not support extensions. [Brew](https://formulae.brew.sh/formula/sqlite)
+preinstalled may not support extensions. For Mac users, [Brew](https://formulae.brew.sh/formula/sqlite)
 will install an appropriate build of SQLite.
 _Note: you may need to modify your **$PATH**. Pay close attention to brew's PATH instruction_
 
@@ -75,19 +75,19 @@ Start the replicator service with the following terminal command:
 
 ```bash
 cd mycelite/examples
-cd cargo run -p sync-backend
+cargo run -p sync-backend
 ```
 
 #### SQLite Writer
 
-In a new terminal, start an SQLite writer instance with the following command:
+In a new terminal, start a SQLite writer instance with the following command:
 
 ```
 cd mycelite
 MYCELIAL_WRITER=true sqlite3
 ```
 
-After SQLites CLI opens, load the extension and open the database with the
+After SQLite's CLI opens, load the extension and open the database with the
 following commands:
 
 ```
