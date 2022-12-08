@@ -53,7 +53,7 @@ The version of Rust must be >= 1.65.
 Install a recent version of SQLite. The default version of SQLite that comes
 preinstalled may not support extensions. For Mac users, [Brew](https://formulae.brew.sh/formula/sqlite)
 will install an appropriate build of SQLite.
-_Note: you may need to modify your **$PATH**. Pay close attention to brew's PATH instruction_
+_Note: you may need to modify your **$PATH**. Pay close attention to Brew's PATH instructions._
 
 ### Building Mycelite
 
