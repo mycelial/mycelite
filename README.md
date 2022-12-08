@@ -35,12 +35,12 @@ multiple devices and synchronize those changes to all your devices.
 
 ### Why aren't more developers creating local-first applications?
 
-Actual budget is a good example of a local-first application, but it wasn't very
-easy to build. The Authors had to write a bunch of synchronization-related code,
+Actual Budget is a good example of a local-first application, but it wasn't very
+easy to build. The authors had to write a bunch of synchronization-related code,
 that implements and uses
 [CRDTs](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type), and
 this start-from-scratch approach just isn't practical for most situations.
-Building local first applications today is too difficult, but we're going to
+Building local-first applications today is too difficult, but we're going to
 change that.
 
 ## Quickstart
