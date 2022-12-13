@@ -1,24 +1,21 @@
-//! Journal Data Format Deserializer
+//! SQLite data format deserializer
 
 use crate::error::Error;
 use block::Block;
-use serde::{
-    de::{self, Deserializer, Visitor},
-    Deserialize,
-};
+use serde::{de, de::Visitor, Deserialize, Deserializer};
 use std::io::Read;
 
-struct De<R> {
+struct SqliteDe<R> {
     reader: R,
 }
 
-impl<R: Read> De<R> {
+impl<R: Read> SqliteDe<R> {
     fn from_reader(reader: R) -> Self {
         Self { reader }
     }
 }
 
-impl<'de, 'a, R> Deserializer<'de> for &'a mut De<R>
+impl<'de, 'a, R> Deserializer<'de> for &'a mut SqliteDe<R>
 where
     R: Read,
 {
@@ -28,7 +25,7 @@ where
     where
         V: Visitor<'de>,
     {
-        Err(Self::Error::Unsupported)
+        Err(Self::Error::Unsupported("Deserializer::deserialize_any"))
     }
 
     fn deserialize_bool<V>(self, v: V) -> Result<V::Value, Self::Error>
@@ -134,70 +131,72 @@ where
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Self::Error::Unsupported("Deserializer::deserialize_char"))
     }
 
     fn deserialize_str<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_str"))
     }
 
     fn deserialize_string<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_string"))
     }
 
     fn deserialize_bytes<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_bytes"))
     }
 
     fn deserialize_byte_buf<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_byte_buf"))
     }
 
     fn deserialize_option<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_option"))
     }
 
     fn deserialize_unit<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_unit"))
     }
 
     fn deserialize_unit_struct<V>(self, _name: &str, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_unit_struct"))
     }
 
     fn deserialize_newtype_struct<V>(self, _name: &str, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported(
+            "Deserializer::deserialize_newtype_struct",
+        ))
     }
 
     fn deserialize_seq<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_seq"))
     }
 
     fn deserialize_tuple<V>(self, len: usize, v: V) -> Result<V::Value, Self::Error>
@@ -216,14 +215,14 @@ where
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_tuple_struct"))
     }
 
     fn deserialize_map<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_map"))
     }
 
     fn deserialize_struct<V>(
@@ -247,27 +246,27 @@ where
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_enum"))
     }
 
     fn deserialize_identifier<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_identifier"))
     }
 
     fn deserialize_ignored_any<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("Deserializer::deserialize_ignored_any"))
     }
 }
 
 /// SeqAccess for Visitor
 struct SeqAccess<'a, R: 'a> {
-    de: &'a mut De<R>,
+    de: &'a mut SqliteDe<R>,
     len: usize,
 }
 
@@ -278,7 +277,7 @@ impl<'a, 'de, R: Read> de::SeqAccess<'de> for SeqAccess<'a, R> {
     where
         T: de::DeserializeSeed<'de>,
     {
-        unimplemented!()
+        Err(Error::Unsupported("SeqAccess::next_element"))
     }
 
     fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>
@@ -294,8 +293,9 @@ impl<'a, 'de, R: Read> de::SeqAccess<'de> for SeqAccess<'a, R> {
     }
 }
 
+
 /// Deserialize default value (zero) as None
-pub fn custom_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+pub fn zero_as_none<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de> + Default + Copy + PartialEq + Eq,
@@ -324,5 +324,5 @@ where
         .map_err(Error::OutOfMemory)?;
     buf.resize(T::block_size(), 0);
     reader.read_exact(&mut buf).map_err(Error::IoError)?;
-    T::deserialize(&mut De::from_reader(std::io::Cursor::new(buf)))
+    T::deserialize(&mut SqliteDe::from_reader(std::io::Cursor::new(buf)))
 }

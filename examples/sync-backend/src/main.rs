@@ -24,7 +24,8 @@ use axum::{
     Router, Server,
 };
 use futures::StreamExt;
-use journal::{de, se, Journal, PageHeader, SnapshotHeader};
+use journal::{Journal, PageHeader, SnapshotHeader};
+use serde_sqlite::{se, de};
 use std::io::Read;
 use std::sync::Arc;
 use tokio::sync::Mutex;

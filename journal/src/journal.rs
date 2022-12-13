@@ -1,15 +1,17 @@
 //! Journal (v1)
 
-use crate::de;
-use crate::se;
+use crate::error::Error;
 use block::{block, Block};
 use chrono;
 use serde::{Deserialize, Serialize};
+use serde_sqlite::{from_reader, to_bytes};
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path;
 
 pub(crate) const MAGIC: u32 = 0x00907A70;
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub struct Journal<F = fs::File>
@@ -120,8 +122,6 @@ impl<F: Seek, W: Seek, R: Seek> Seek for Fd<F, W, R> {
     }
 }
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
 impl Journal<fs::File> {
     /// Create new journal
     pub fn create<P: AsRef<path::Path>>(p: P) -> Result<Self> {
@@ -165,7 +165,7 @@ impl<F: Read + Write + Seek> Journal<F> {
         }
         self.fd.seek(SeekFrom::Start(self.header.eof))?;
         self.fd.to_writer();
-        self.fd.write(&se::to_bytes(&SnapshotHeader::new(
+        self.fd.write(&to_bytes(&SnapshotHeader::new(
             self.header.snapshot_counter,
             chrono::Utc::now().timestamp_micros(),
         ))?)?;
@@ -182,7 +182,7 @@ impl<F: Read + Write + Seek> Journal<F> {
         };
         let page_num = self.page_count.unwrap();
         self.page_count.as_mut().map(|x| *x += 1);
-        self.fd.write_all(&se::to_bytes(&PageHeader::new(
+        self.fd.write_all(&to_bytes(&PageHeader::new(
             offset,
             page_num,
             page.len() as u32,
@@ -203,7 +203,7 @@ impl<F: Read + Write + Seek> Journal<F> {
             return Ok(());
         }
         // commit snapshot by writting final empty page
-        self.fd.write_all(&se::to_bytes(&PageHeader::last())?)?;
+        self.fd.write_all(&to_bytes(&PageHeader::last())?)?;
         self.page_count = None;
 
         self.header.snapshot_counter += 1;
@@ -242,7 +242,7 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * read header
     fn read_header<R: Read + Seek>(fd: &mut R) -> Result<Header> {
         fd.seek(SeekFrom::Start(0))?;
-        de::from_reader(BufReader::new(fd)).map_err(Into::into)
+        from_reader(BufReader::new(fd)).map_err(Into::into)
     }
 
     /// Write header to a given fd
@@ -251,7 +251,7 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * write header
     fn write_header<W: Write + Seek>(fd: &mut W, header: &Header) -> Result<()> {
         fd.seek(SeekFrom::Start(0))?;
-        fd.write_all(&se::to_bytes(header)?).map_err(Into::into)
+        fd.write_all(&to_bytes(header)?).map_err(Into::into)
     }
 
     /// Check if snapshot was already started
@@ -294,8 +294,7 @@ impl<'a> Iterator for IntoIter<'a> {
             return None;
         }
         if self.current_snapshot.is_none() {
-            self.current_snapshot = match de::from_reader::<SnapshotHeader, _>(&mut self.journal.fd)
-            {
+            self.current_snapshot = match from_reader::<SnapshotHeader, _>(&mut self.journal.fd) {
                 Ok(s) => Some(s),
                 Err(e) => {
                     self.eoi = true;
@@ -303,7 +302,7 @@ impl<'a> Iterator for IntoIter<'a> {
                 }
             };
         }
-        let page_header = match de::from_reader::<PageHeader, _>(&mut self.journal.fd) {
+        let page_header = match from_reader::<PageHeader, _>(&mut self.journal.fd) {
             Ok(p) => p,
             Err(e) => {
                 self.eoi = true;

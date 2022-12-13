@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 libsqlite-sys = { path = "../../libsqlite-sys" }
 journal = { path = "../../journal" }
+serde_sqlite = { path = "../../serde_sqlite" }
 
 tokio = { version = "1", features = ["full"] }
 axum  = { version = "0.6", features = ["headers"] }

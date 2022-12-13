@@ -1,5 +1,5 @@
 use block::{block, Block};
-use journal::{to_bytes, Error};
+use serde_sqlite::{to_bytes, Error};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -16,9 +16,9 @@ struct ValidStruct {
     i_64: i64,
     f_32: f32,
     f_64: f64,
-    #[serde(serialize_with = "journal::se::custom_option")]
+    #[serde(serialize_with = "serde_sqlite::se::none_as_zero")]
     n: Option<u64>,
-    #[serde(serialize_with = "journal::se::custom_option")]
+    #[serde(serialize_with = "serde_sqlite::se::none_as_zero")]
     s: Option<u64>,
 }
 

@@ -5,4 +5,6 @@ members = [
     "journal",
     "libsqlite-sys",
     "mycelite",
+    "page_parser",
+    "serde_sqlite",
 ]
