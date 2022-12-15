@@ -140,12 +140,12 @@ impl MclVFSFile {
             s.push_str("-mycelial");
             s
         };
-        let journal = match Journal::try_from(&journal_path) {
-            Ok(j) => j,
+        let (journal, bootstrapped) = match Journal::try_from(&journal_path) {
+            Ok(j) => (j, false),
             Err(e) if e.journal_not_exists() => {
                 let mut journal = Journal::create(&journal_path)?;
                 self.bootstrap_journal(&mut journal, &database_path)?;
-                journal
+                (journal, true)
             },
             Err(e) => return Err(e.into()),
         };
@@ -155,6 +155,10 @@ impl MclVFSFile {
         self.replicator = Some(mem::ManuallyDrop::new(
             replicator::Replicator::new(url, &journal_path, database_path, self.read_only).spawn()
         ));
+
+        if bootstrapped {
+            self.replicator.as_mut().map(|r| r.new_snapshot());
+        }
         Ok(())
     }
 }
