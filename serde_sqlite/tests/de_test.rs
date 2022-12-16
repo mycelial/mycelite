@@ -1,6 +1,6 @@
-use block::{block, Block};
-use journal::Error;
-use journal::{from_bytes, from_reader};
+use block::block;
+use serde_sqlite::Error;
+use serde_sqlite::{from_bytes, from_reader};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -17,16 +17,16 @@ struct ValidStruct {
     i_64: i64,
     f_32: f32,
     f_64: f64,
-    #[serde(deserialize_with = "journal::de::custom_option")]
+    #[serde(deserialize_with = "serde_sqlite::de::zero_as_none")]
     n: Option<u64>,
-    #[serde(deserialize_with = "journal::de::custom_option")]
+    #[serde(deserialize_with = "serde_sqlite::de::zero_as_none")]
     s: Option<u64>,
 }
 
 #[test]
 #[rustfmt::skip]
 fn test_deserialization_from_bytes() {
-    let block = &[ 
+    let block = &[
         /* b       */ 0x01,
         /* u_8     */ 0x02,
         /* u_16    */ 0x01, 0x02,
@@ -40,7 +40,7 @@ fn test_deserialization_from_bytes() {
         /* f_64    */ 0x7f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         /* n<u64>  */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         /* s<u64>  */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        /* block   */ 
+        /* block   */
         /* padding */ 0x01, 0x02, 0x03, 0x04, 0x05
     ];
     let decoded = from_bytes::<ValidStruct>(block);
@@ -67,7 +67,7 @@ fn test_deserialization_from_bytes() {
 #[test]
 #[rustfmt::skip]
 fn test_deserialization_from_reader() {
-    let block = &[ 
+    let block = &[
         /* b       */ 0x01,
         /* u_8     */ 0x02,
         /* u_16    */ 0x01, 0x02,
@@ -81,7 +81,7 @@ fn test_deserialization_from_reader() {
         /* f_64    */ 0x7f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         /* n<u64>  */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         /* s<u64>  */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        /* block   */ 
+        /* block   */
         /* padding */ 0x00, 0x00, 0x00, 0x00, 0x00
     ];
     let decoded = from_reader::<ValidStruct, _>(std::io::Cursor::new(block));
@@ -109,7 +109,7 @@ fn test_deserialization_from_reader() {
 #[rustfmt::skip]
 fn test_deserialization_error() {
     // incomplete block (padding is missing)
-    let block = &[ 
+    let block = &[
         /* b       */ 0x01,
         /* u_8     */ 0x02,
         /* u_16    */ 0x01, 0x02,

@@ -2,7 +2,8 @@
 //!
 //! ** For demo use only! **
 
-use journal::{de, se, Journal, PageHeader, SnapshotHeader};
+use journal::{Journal, PageHeader, SnapshotHeader};
+use serde_sqlite::{de, se};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};

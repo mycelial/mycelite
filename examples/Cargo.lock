@@ -641,6 +641,7 @@ dependencies = [
  "chrono",
  "clap",
  "serde",
+ "serde_sqlite",
 ]
 
 [[package]]
@@ -1067,6 +1068,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_sqlite"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1164,6 +1173,7 @@ dependencies = [
  "journal",
  "libsqlite-sys",
  "serde",
+ "serde_sqlite",
  "tokio",
  "tokio-util",
  "tracing",

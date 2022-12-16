@@ -1,40 +1,52 @@
-//! Journal Data Format Serialize/Deserialize Error
-
-use serde::{de, ser};
-use std::fmt;
+//! Journal Error
+use serde_sqlite::Error as SerdeSqliteError;
+use std::collections::TryReserveError;
+use std::io::Error as IOError;
 
 #[derive(Debug)]
 pub enum Error {
-    Message(String),
-    IoError(std::io::Error),
-    Incomplete,
-    Unexpected,
-    Unsupported,
-    OutOfMemory(std::collections::TryReserveError),
+    /// std::io::Error
+    IOError(IOError),
+    /// std::collections::TryReserveError
+    TryReserveError(TryReserveError),
+    /// serde_sqlite error
+    SerdeSqliteError(SerdeSqliteError),
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl From<IOError> for Error {
+    fn from(e: IOError) -> Self {
+        Self::IOError(e)
+    }
+}
+
+impl From<TryReserveError> for Error {
+    fn from(e: TryReserveError) -> Self {
+        Self::TryReserveError(e)
+    }
+}
+
+impl From<SerdeSqliteError> for Error {
+    fn from(e: SerdeSqliteError) -> Self {
+        Self::SerdeSqliteError(e)
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error{}
 
-impl ser::Error for Error {
-    fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::Message(msg.to_string())
-    }
-}
-
-impl de::Error for Error {
-    fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::Message(msg.to_string())
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Self::IoError(e)
+impl Error {
+    /// Check if error caused by absense of journal
+    pub fn journal_not_exists(&self) -> bool {
+        match self {
+            Self::IOError(e) => {
+                e.kind() == std::io::ErrorKind::NotFound
+            },
+            _ => false,
+        }
     }
 }

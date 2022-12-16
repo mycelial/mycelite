@@ -12,6 +12,8 @@ test = false
 [dependencies]
 libsqlite-sys = { path = "../libsqlite-sys" }
 journal = { path = "../journal" }
+page_parser = { path = "../page_parser" }
+serde_sqlite = { path = "../serde_sqlite" }
 
 # replicator
 ureq = { version = "2.5" }

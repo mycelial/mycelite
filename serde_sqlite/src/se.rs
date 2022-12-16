@@ -1,14 +1,18 @@
-///! Journal Data Format Serializer
+///! Sqlite data format serializer
 use crate::error::Error;
 use block::Block;
-use serde::{ser, Serialize};
+use serde::{
+    ser::SerializeMap, ser::SerializeSeq, ser::SerializeStruct, ser::SerializeStructVariant,
+    ser::SerializeTuple, ser::SerializeTupleStruct, ser::SerializeTupleVariant, Serialize,
+    Serializer,
+};
 use std::io::Write;
 
-struct Se<W: Write> {
+struct SqliteSe<W: Write> {
     writer: W,
 }
 
-impl<'a, W: Write> ser::Serializer for &'a mut Se<W> {
+impl<'a, W: Write> Serializer for &'a mut SqliteSe<W> {
     type Ok = ();
     type Error = Error;
 
@@ -93,30 +97,28 @@ impl<'a, W: Write> ser::Serializer for &'a mut Se<W> {
             .map_err(Into::into)
     }
 
-    // FIXME: not yet supported, and probably, will never be needed
     fn serialize_str(self, _: &str) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_str"))
     }
 
-    // FIXME: not yet supported, and probably, will never be needed
     fn serialize_bytes(self, _: &[u8]) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_bytes"))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_none"))
     }
 
     fn serialize_some<T: ?Sized + Serialize>(self, _: &T) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_some"))
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_unit"))
     }
 
     fn serialize_unit_struct(self, _name: &str) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_unit_struct"))
     }
 
     fn serialize_unit_variant(
@@ -125,7 +127,7 @@ impl<'a, W: Write> ser::Serializer for &'a mut Se<W> {
         _variant_index: u32,
         _variant: &str,
     ) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_unit_variant"))
     }
 
     fn serialize_newtype_struct<T: ?Sized + Serialize>(
@@ -133,7 +135,7 @@ impl<'a, W: Write> ser::Serializer for &'a mut Se<W> {
         _name: &str,
         _value: &T,
     ) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_newtype_struct"))
     }
 
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
@@ -143,7 +145,7 @@ impl<'a, W: Write> ser::Serializer for &'a mut Se<W> {
         _variant: &str,
         _value: &T,
     ) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("Serializer::serialize_newtype_variant"))
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -195,7 +197,7 @@ impl<'a, W: Write> ser::Serializer for &'a mut Se<W> {
     }
 }
 
-impl<'a, W: Write> ser::SerializeSeq for &'a mut Se<W> {
+impl<'a, W: Write> SerializeSeq for &'a mut SqliteSe<W> {
     type Ok = ();
     type Error = Error;
 
@@ -203,78 +205,23 @@ impl<'a, W: Write> ser::SerializeSeq for &'a mut Se<W> {
     where
         T: ?Sized + Serialize,
     {
-        unimplemented!()
+        Err(Error::Unsupported("SerializeSeq::serialize_element"))
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("SerializeSeq::end"))
     }
 }
 
-impl<'a, W: Write> ser::SerializeTuple for &'a mut Se<W> {
+impl<'a, W: Write> SerializeTuple for &'a mut SqliteSe<W> {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_element<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: ?Sized + Serialize,
     {
-        unimplemented!()
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
-    }
-}
-
-impl<'a, W: Write> ser::SerializeTupleStruct for &'a mut Se<W> {
-    type Ok = ();
-    type Error = Error;
-
-    fn serialize_field<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: ?Sized + Serialize,
-    {
-        unimplemented!()
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
-    }
-}
-
-impl<'a, W: Write> ser::SerializeTupleVariant for &'a mut Se<W> {
-    type Ok = ();
-    type Error = Error;
-
-    fn serialize_field<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: ?Sized + Serialize,
-    {
-        unimplemented!()
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
-    }
-}
-
-impl<'a, W: Write> ser::SerializeMap for &'a mut Se<W> {
-    type Ok = ();
-    type Error = Error;
-
-    fn serialize_key<T>(&mut self, _key: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: ?Sized + Serialize,
-    {
-        unimplemented!()
-    }
-
-    fn serialize_value<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: ?Sized + Serialize,
-    {
-        unimplemented!()
+        value.serialize(&mut **self)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -282,7 +229,62 @@ impl<'a, W: Write> ser::SerializeMap for &'a mut Se<W> {
     }
 }
 
-impl<'a, W: Write> ser::SerializeStruct for &'a mut Se<W> {
+impl<'a, W: Write> SerializeTupleStruct for &'a mut SqliteSe<W> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_field<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Err(Error::Unsupported("SerializeTupleStruct::serialize_field"))
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Err(Error::Unsupported("SerializeTupleStruct::end"))
+    }
+}
+
+impl<'a, W: Write> SerializeTupleVariant for &'a mut SqliteSe<W> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_field<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Err(Error::Unsupported("SerializeTupleVariant::serialize_field"))
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Err(Error::Unsupported("SerializeTupleVariant::end"))
+    }
+}
+
+impl<'a, W: Write> SerializeMap for &'a mut SqliteSe<W> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_key<T>(&mut self, _key: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Err(Error::Unsupported("SerializeMap::serialize_key"))
+    }
+
+    fn serialize_value<T>(&mut self, _value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Err(Error::Unsupported("SerializeMap::serialize_value"))
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Err(Error::Unsupported("SerializeMap::end"))
+    }
+}
+
+impl<'a, W: Write> SerializeStruct for &'a mut SqliteSe<W> {
     type Ok = ();
     type Error = Error;
 
@@ -298,7 +300,7 @@ impl<'a, W: Write> ser::SerializeStruct for &'a mut Se<W> {
     }
 }
 
-impl<'a, W: Write> ser::SerializeStructVariant for &'a mut Se<W> {
+impl<'a, W: Write> SerializeStructVariant for &'a mut SqliteSe<W> {
     type Ok = ();
     type Error = Error;
 
@@ -306,18 +308,20 @@ impl<'a, W: Write> ser::SerializeStructVariant for &'a mut Se<W> {
     where
         T: ?Sized + Serialize,
     {
-        unimplemented!()
+        Err(Error::Unsupported(
+            "SerializeStructVariant::serialize_field",
+        ))
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Err(Error::Unsupported("SerializeStructVariant::end"))
     }
 }
 
-/// serialize None as zero
-pub fn custom_option<S, T>(field: &Option<T>, s: S) -> Result<S::Ok, S::Error>
+// serialize None as zero
+pub fn none_as_zero<S, T>(field: &Option<T>, s: S) -> Result<S::Ok, S::Error>
 where
-    S: ser::Serializer,
+    S: Serializer,
     T: Serialize + Copy + Default,
 {
     let value = match field.as_ref() {
@@ -339,11 +343,10 @@ where
     Ok(buf)
 }
 
-// FIXME:
-// this func doesn't check block if block was fully written
+// FIXME: this func doesn't perform write for a whole block, so not pub.
 fn to_writer<T, W: Write>(writer: W, value: &T) -> Result<(), Error>
 where
     T: Serialize,
 {
-    value.serialize(&mut Se { writer })
+    value.serialize(&mut SqliteSe { writer })
 }
