@@ -7,10 +7,10 @@ use serde_sqlite::{de, se};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use ureq;
 
-#[derive(Debug)]
 enum Message {
     /// New snapshot added locally
     NewLocalSnapshot,
@@ -20,12 +20,12 @@ enum Message {
     Quit,
 }
 
-#[derive(Debug)]
 pub struct Replicator {
     url: String,
     database_path: String,
     journal: Journal,
     read_only: bool,
+    lock: Arc<Mutex<()>>,
 }
 
 impl Replicator {
@@ -34,12 +34,14 @@ impl Replicator {
         journal_path: P,
         database_path: String,
         read_only: bool,
+        lock: Arc<Mutex<()>>,
     ) -> Self {
         Self {
             url,
             journal: Journal::try_from(journal_path).unwrap(),
             database_path,
             read_only,
+            lock,
         }
     }
 
@@ -66,7 +68,9 @@ impl Replicator {
     /// snapshot
     fn enter_local_loop(&mut self, rx: &mut Receiver<Message>) {
         loop {
-            self.maybe_push_snapshots().ok();
+            if !self.read_only {
+                self.maybe_push_snapshots().ok();
+            }
             match rx.recv_timeout(std::time::Duration::from_secs(5)) {
                 Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => (),
@@ -185,10 +189,9 @@ impl Replicator {
     }
 
     // FIXME: move to journal API
-    // FIXME: lock sqlite database before restoration (see sqlite3_db_mutex)
-    // NOTE: snapshot is recovered from scratch each time. Is there a way to store info about last
-    // applied snapshot?
+    // FIXME: snapshot is recovered from scratch each time
     fn restore_latest_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let lock = self.lock.lock().map_err(|e| "failed to lock")?;
         let mut output = std::io::BufWriter::with_capacity(
             0x100_000,
             std::fs::OpenOptions::new()

@@ -12,6 +12,7 @@ use std::mem;
 use std::os::unix::fs::FileExt;
 use std::ptr;
 use page_parser;
+use std::sync::{Mutex, Arc, MutexGuard};
 
 libsqlite_sys::setup!();
 
@@ -80,13 +81,14 @@ impl MclVFS {
     }
 }
 
-#[derive(Debug)]
 #[repr(C)]
 struct MclVFSFile {
     base: ffi::sqlite3_file,
     journal: Option<mem::ManuallyDrop<Journal>>,
     read_only: bool,
     replicator: Option<mem::ManuallyDrop<replicator::ReplicatorHandle>>,
+    mutex: mem::ManuallyDrop<Arc<Mutex<()>>>,
+    mutex_guard: Option<mem::ManuallyDrop<MutexGuard<'static, ()>>>,
     vfs: *mut ffi::sqlite3_vfs,
     real: ffi::sqlite3_file,
 }
@@ -95,6 +97,13 @@ impl MclVFSFile {
     /// downcast pfile ptr to MclVFSFile struct ptr
     unsafe fn from_ptr(pfile: *mut ffi::sqlite3_file) -> &'static mut Self {
         &mut *(pfile as *mut MclVFSFile)
+    }
+
+    /// init VFS File
+    unsafe fn init(&mut self, vfs: *mut ffi::sqlite3_vfs) {
+        self.vfs = vfs;
+        self.mutex = mem::ManuallyDrop::new(Arc::new(Mutex::new(())));
+        self.mutex_guard = None
     }
 
     /// bootstrap journal
@@ -122,10 +131,11 @@ impl MclVFSFile {
         journal.commit().map_err(Into::into)
     }
 
-    unsafe fn setup_journal(
+    fn setup_journal(
         &mut self,
         flags: c_int,
         zname: *const c_char,
+        lock: Arc<Mutex<()>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.read_only = std::env::var("MYCELIAL_WRITER").unwrap_or("false".into()) == "false";
         if flags & ffi::SQLITE_OPEN_MAIN_DB == 0 {
@@ -134,7 +144,7 @@ impl MclVFSFile {
             return Ok(());
         }
 
-        let database_path = CStr::from_ptr(zname).to_str()?.to_owned();
+        let database_path = unsafe { CStr::from_ptr(zname) }.to_str()?.to_owned();
         let journal_path = {
             let mut s = database_path.clone();
             s.push_str("-mycelial");
@@ -153,13 +163,27 @@ impl MclVFSFile {
 
         let url = std::env::var("MYCELIAL_SYNC_BACKEND").unwrap_or("http://localhost:8080".into());
         self.replicator = Some(mem::ManuallyDrop::new(
-            replicator::Replicator::new(url, &journal_path, database_path, self.read_only).spawn()
+            replicator::Replicator::new(url, &journal_path, database_path, self.read_only, lock).spawn()
         ));
 
         if bootstrapped {
             self.replicator.as_mut().map(|r| r.new_snapshot());
         }
         Ok(())
+    }
+
+    fn lock(&'static mut self) {
+        if self.mutex_guard.is_some() {
+            return
+        };
+        self.mutex_guard = Some(mem::ManuallyDrop::new(self.mutex.lock().unwrap()));
+
+    }
+
+    fn unlock(&mut self) {
+        if self.mutex_guard.is_some() {
+            self.mutex_guard.take().map(mem::ManuallyDrop::into_inner);
+        }
     }
 }
 
@@ -174,8 +198,8 @@ unsafe extern "C" fn mvfs_open(
 ) -> c_int {
     let real = MclVFS::as_real_ref(vfs);
     let file = MclVFSFile::from_ptr(file);
-    file.vfs = vfs;
-    if let Err(_) = file.setup_journal(flags, zname) {
+    file.init(vfs);
+    if let Err(_) = file.setup_journal(flags, zname, Arc::clone(&file.mutex)) {
         return ffi::SQLITE_ERROR;
     }
     file.base.pMethods = &MclVFSIO as *const _;
@@ -300,6 +324,7 @@ static MclVFSIO: ffi::sqlite3_io_methods = ffi::sqlite3_io_methods {
 
 unsafe extern "C" fn mvfs_io_close(pfile: *mut ffi::sqlite3_file) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
+    file.unlock();
     file.journal.take().map(mem::ManuallyDrop::into_inner);
     file.replicator
         .take()
@@ -370,11 +395,19 @@ unsafe extern "C" fn mvfs_io_file_size(
 
 unsafe extern "C" fn mvfs_io_lock(pfile: *mut ffi::sqlite3_file, elock: c_int) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xLock.unwrap()(&mut file.real, elock)
+    let real = (&mut file.real) as *mut ffi::sqlite3_file;
+    // lock only main database file
+    if file.journal.is_some() {
+        file.lock();
+    }
+    (&*(&*real).pMethods).xLock.unwrap()(real, elock)
 }
 
 unsafe extern "C" fn mvfs_io_unlock(pfile: *mut ffi::sqlite3_file, elock: c_int) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
+    if file.journal.is_some() {
+        file.unlock()
+    }
     (&*file.real.pMethods).xUnlock.unwrap()(&mut file.real, elock)
 }
 
