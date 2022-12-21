@@ -7,12 +7,12 @@ mod replicator;
 use journal::Journal;
 use libsqlite_sys::c_str;
 use libsqlite_sys::ffi;
+use page_parser;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::mem;
 use std::os::unix::fs::FileExt;
 use std::ptr;
-use page_parser;
-use std::sync::{Mutex, Arc, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 libsqlite_sys::setup!();
 
@@ -109,7 +109,11 @@ impl MclVFSFile {
     /// bootstrap journal
     ///
     /// happens only once on journal creation.
-    fn bootstrap_journal(&self, journal: &mut Journal, database_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn bootstrap_journal(
+        &self,
+        journal: &mut Journal,
+        database_path: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let db = page_parser::Database::new(database_path);
         let iter = match db.into_raw_page_iter() {
             Ok(iter) => iter,
@@ -117,16 +121,16 @@ impl MclVFSFile {
                 if let Some(err) = e.downcast_ref::<std::io::Error>() {
                     if err.kind() == std::io::ErrorKind::NotFound {
                         // no database file - no need in bootstraping
-                        return Ok(())
+                        return Ok(());
                     }
                 }
-                return Err(e)
+                return Err(e);
             }
         };
         for page in iter {
             let page = page?;
             let page = page.as_slice();
-            journal.add_page(page.len() as u64, page)?;
+            journal.new_page(page.len() as u64, page)?;
         }
         journal.commit().map_err(Into::into)
     }
@@ -156,14 +160,15 @@ impl MclVFSFile {
                 let mut journal = Journal::create(&journal_path)?;
                 self.bootstrap_journal(&mut journal, &database_path)?;
                 (journal, true)
-            },
+            }
             Err(e) => return Err(e.into()),
         };
         self.journal = Some(mem::ManuallyDrop::new(journal));
 
         let url = std::env::var("MYCELIAL_SYNC_BACKEND").unwrap_or("http://localhost:8080".into());
         self.replicator = Some(mem::ManuallyDrop::new(
-            replicator::Replicator::new(url, &journal_path, database_path, self.read_only, lock).spawn()
+            replicator::Replicator::new(url, &journal_path, database_path, self.read_only, lock)
+                .spawn(),
         ));
 
         if bootstrapped {
@@ -174,10 +179,9 @@ impl MclVFSFile {
 
     fn lock(&'static mut self) {
         if self.mutex_guard.is_some() {
-            return
+            return;
         };
         self.mutex_guard = Some(mem::ManuallyDrop::new(self.mutex.lock().unwrap()));
-
     }
 
     fn unlock(&mut self) {
@@ -326,9 +330,7 @@ unsafe extern "C" fn mvfs_io_close(pfile: *mut ffi::sqlite3_file) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
     file.unlock();
     file.journal.take().map(mem::ManuallyDrop::into_inner);
-    file.replicator
-        .take()
-        .map(mem::ManuallyDrop::into_inner);
+    file.replicator.take().map(mem::ManuallyDrop::into_inner);
     (&*file.real.pMethods).xClose.unwrap()(&mut file.real)
 }
 
@@ -353,7 +355,7 @@ unsafe extern "C" fn mvfs_io_write(
         return ffi::SQLITE_READONLY;
     }
     let result = file.journal.as_mut().map(|journal| {
-        journal.add_page(
+        journal.new_page(
             offset as u64,
             std::slice::from_raw_parts(buf as *const u8, amt as usize),
         )

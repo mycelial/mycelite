@@ -14,3 +14,4 @@ serde_sqlite = { path = "../serde_sqlite" }
 
 [dev-dependencies]
 tempfile = "3"
+quickcheck = "1"

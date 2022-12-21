@@ -24,13 +24,13 @@ use axum::{
     Router, Server,
 };
 use futures::StreamExt;
-use journal::{Journal, PageHeader, SnapshotHeader};
+use journal::{Journal, Protocol, Stream};
 use serde_sqlite::{se, de};
 use std::io::Read;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use serde::{Deserialize};
+use serde::Deserialize;
 
 fn to_error<T: std::fmt::Debug>(e: T) -> String {
     format!("{:?}", e)
@@ -58,26 +58,23 @@ async fn post_snapshot(
     let mut whole_body = std::io::Cursor::new(whole_body);
     let mut journal = state.journal.lock().await;
 
-    while let Ok(snapshot) = de::from_reader::<SnapshotHeader, _>(&mut whole_body).map_err(to_error)
-    {
-        tracing::info!("receiving new snapshot: {:?}", snapshot);
-        while let Ok(page_header) =
-            de::from_reader::<PageHeader, _>(&mut whole_body).map_err(to_error)
-        {
-            tracing::info!("  page header: {:?}", page_header);
-            let mut buf = Vec::<u8>::with_capacity(page_header.page_size as usize);
-            unsafe { buf.set_len(page_header.page_size as usize) };
-            (&mut whole_body)
-                .read_exact(buf.as_mut_slice())
-                .map_err(to_error)?;
-            if page_header.is_last() {
-                break;
+    loop {
+        match de::from_reader::<Protocol, _>(&mut whole_body) {
+            Ok(Protocol::SnapshotHeader(snapshot_header)) => {
+                journal.commit().map_err(to_error)?;
+                journal.add_snapshot(&snapshot_header).map_err(to_error)?;
             }
-            journal
-                .add_page(page_header.offset, &buf)
-                .map_err(to_error)?;
+            Ok(Protocol::PageHeader(page_header)) => {
+                let mut page = vec![0; page_header.page_size as usize];
+                whole_body.read_exact(page.as_mut_slice()).map_err(to_error)?;
+                journal.add_page(&page_header, page.as_slice()).map_err(to_error)?;
+            },
+            Ok(Protocol::EndOfStream(_)) => {
+                journal.commit().map_err(to_error)?;
+                break;
+            },
+            Err(e) => return Err(to_error(e)),
         }
-        journal.commit().map_err(to_error)?;
     }
     Ok("OK")
 }
@@ -105,21 +102,9 @@ async fn get_snapshot(
     let mut journal = state.journal.lock().await;
     let iter = journal
         .into_iter()
-        .map(Result::unwrap)
-        .filter(|(snapshot_header, _, _)| snapshot_id <= snapshot_header.num);
-    let mut last_seen = None;
+        .skip_snapshots(snapshot_id);
     let mut buf = vec![];
-    for (snapshot_header, page_header, page) in iter {
-        if last_seen != Some(snapshot_header.num) {
-            if last_seen.is_some() {
-                buf.extend(se::to_bytes(&PageHeader::last()).map_err(to_error)?);
-            }
-            last_seen = Some(snapshot_header.num);
-            buf.extend(se::to_bytes(&snapshot_header).map_err(to_error)?);
-        }
-        buf.extend(se::to_bytes(&page_header).map_err(to_error)?);
-        buf.extend(&page);
-    }
+    Stream::new(iter).read_to_end(&mut buf).map_err(to_error)?;
     Ok(buf)
 }
 
