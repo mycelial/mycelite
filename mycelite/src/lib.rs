@@ -57,9 +57,11 @@ static mut MclVFS: MclVFS = MclVFS {
 impl MclVFS {
     /// Initialite MclVFS as a proxy to *real* VFS
     unsafe fn init(real: *mut ffi::sqlite3_vfs) {
-        MclVFS.real = real;
-        MclVFS.base.szOsFile = mem::size_of::<MclVFSFile>() as c_int + (*real).szOsFile;
-        MclVFS.base.mxPathname = (*real).mxPathname;
+        if MclVFS.real.is_null() {
+            MclVFS.real = real;
+            MclVFS.base.szOsFile = mem::size_of::<MclVFSFile>() as c_int + (&*real).szOsFile;
+            MclVFS.base.mxPathname = (&*real).mxPathname;
+        }
     }
 
     /// Get pointer to base vfs struct
