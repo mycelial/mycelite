@@ -24,8 +24,19 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=sqlite3");
     }
 
+    let pkg_conf = pkg_config::Config::new()
+        .probe("sqlite3")
+        .expect("installation of sqlite3 required");
+
+    let include_paths = pkg_conf
+        .include_paths
+        .iter()
+        .map(|p| format!("-I{}", p.to_str().expect("")))
+        .collect::<Vec<_>>();
+
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
+        .clang_args(include_paths.as_slice())
         .use_core()
         .ctypes_prefix("core::ffi")
         .parse_callbacks(Box::new(ParseCallbacks {}))
