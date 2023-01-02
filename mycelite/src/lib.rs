@@ -7,7 +7,6 @@ mod replicator;
 use journal::Journal;
 use libsqlite_sys::c_str;
 use libsqlite_sys::ffi;
-use page_parser;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::mem;
 use std::os::unix::fs::FileExt;
@@ -59,8 +58,8 @@ impl MclVFS {
     /// Initialite MclVFS as a proxy to *real* VFS
     unsafe fn init(real: *mut ffi::sqlite3_vfs) {
         MclVFS.real = real;
-        MclVFS.base.szOsFile = mem::size_of::<MclVFSFile>() as c_int + (&*real).szOsFile;
-        MclVFS.base.mxPathname = (&*real).mxPathname;
+        MclVFS.base.szOsFile = mem::size_of::<MclVFSFile>() as c_int + (*real).szOsFile;
+        MclVFS.base.mxPathname = (*real).mxPathname;
     }
 
     /// Get pointer to base vfs struct
@@ -172,7 +171,9 @@ impl MclVFSFile {
         ));
 
         if bootstrapped {
-            self.replicator.as_mut().map(|r| r.new_snapshot());
+            if let Some(r) = self.replicator.as_mut() {
+                r.new_snapshot();
+            }
         }
         Ok(())
     }
@@ -203,7 +204,7 @@ unsafe extern "C" fn mvfs_open(
     let real = MclVFS::as_real_ref(vfs);
     let file = MclVFSFile::from_ptr(file);
     file.init(vfs);
-    if let Err(_) = file.setup_journal(flags, zname, Arc::clone(&file.mutex)) {
+    if file.setup_journal(flags, zname, Arc::clone(&file.mutex)).is_err() {
         return ffi::SQLITE_ERROR;
     }
     file.base.pMethods = &MclVFSIO as *const _;
@@ -331,7 +332,7 @@ unsafe extern "C" fn mvfs_io_close(pfile: *mut ffi::sqlite3_file) -> c_int {
     file.unlock();
     file.journal.take().map(mem::ManuallyDrop::into_inner);
     file.replicator.take().map(mem::ManuallyDrop::into_inner);
-    (&*file.real.pMethods).xClose.unwrap()(&mut file.real)
+    (*file.real.pMethods).xClose.unwrap()(&mut file.real)
 }
 
 unsafe extern "C" fn mvfs_io_read(
@@ -341,7 +342,7 @@ unsafe extern "C" fn mvfs_io_read(
     offset: ffi::sqlite_int64,
 ) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xRead.unwrap()(&mut file.real, buf, amt, offset)
+    (*file.real.pMethods).xRead.unwrap()(&mut file.real, buf, amt, offset)
 }
 
 unsafe extern "C" fn mvfs_io_write(
@@ -364,7 +365,7 @@ unsafe extern "C" fn mvfs_io_write(
         None | Some(Ok(_)) => (),
         Some(Err(_e)) => return ffi::SQLITE_ERROR,
     };
-    (&*file.real.pMethods).xWrite.unwrap()(&mut file.real, buf, amt, offset)
+    (*file.real.pMethods).xWrite.unwrap()(&mut file.real, buf, amt, offset)
 }
 
 unsafe extern "C" fn mvfs_io_truncate(
@@ -372,7 +373,7 @@ unsafe extern "C" fn mvfs_io_truncate(
     size: ffi::sqlite3_int64,
 ) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xTruncate.unwrap()(&mut file.real, size)
+    (*file.real.pMethods).xTruncate.unwrap()(&mut file.real, size)
 }
 
 unsafe extern "C" fn mvfs_io_sync(pfile: *mut ffi::sqlite3_file, flags: c_int) -> c_int {
@@ -381,10 +382,10 @@ unsafe extern "C" fn mvfs_io_sync(pfile: *mut ffi::sqlite3_file, flags: c_int) -
         None | Some(Ok(_)) => (),
         Some(Err(e)) => return ffi::SQLITE_ERROR,
     };
-    file.replicator
-        .as_mut()
-        .map(|replicator| replicator.new_snapshot());
-    (&*file.real.pMethods).xSync.unwrap()(&mut file.real, flags)
+    if let Some(replicator) = file.replicator.as_mut() {
+        replicator.new_snapshot();
+    }
+    (*file.real.pMethods).xSync.unwrap()(&mut file.real, flags)
 }
 
 unsafe extern "C" fn mvfs_io_file_size(
@@ -392,7 +393,7 @@ unsafe extern "C" fn mvfs_io_file_size(
     psize: *mut ffi::sqlite3_int64,
 ) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xFileSize.unwrap()(&mut file.real, psize)
+    (*file.real.pMethods).xFileSize.unwrap()(&mut file.real, psize)
 }
 
 unsafe extern "C" fn mvfs_io_lock(pfile: *mut ffi::sqlite3_file, elock: c_int) -> c_int {
@@ -402,7 +403,7 @@ unsafe extern "C" fn mvfs_io_lock(pfile: *mut ffi::sqlite3_file, elock: c_int) -
     if file.journal.is_some() {
         file.lock();
     }
-    (&*(&*real).pMethods).xLock.unwrap()(real, elock)
+    (*(*real).pMethods).xLock.unwrap()(real, elock)
 }
 
 unsafe extern "C" fn mvfs_io_unlock(pfile: *mut ffi::sqlite3_file, elock: c_int) -> c_int {
@@ -410,7 +411,7 @@ unsafe extern "C" fn mvfs_io_unlock(pfile: *mut ffi::sqlite3_file, elock: c_int)
     if file.journal.is_some() {
         file.unlock()
     }
-    (&*file.real.pMethods).xUnlock.unwrap()(&mut file.real, elock)
+    (*file.real.pMethods).xUnlock.unwrap()(&mut file.real, elock)
 }
 
 unsafe extern "C" fn mvfs_io_check_reserved_lock(
@@ -418,7 +419,7 @@ unsafe extern "C" fn mvfs_io_check_reserved_lock(
     out: *mut c_int,
 ) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xCheckReservedLock.unwrap()(&mut file.real, out)
+    (*file.real.pMethods).xCheckReservedLock.unwrap()(&mut file.real, out)
 }
 
 unsafe extern "C" fn mvfs_io_file_control(
@@ -427,20 +428,21 @@ unsafe extern "C" fn mvfs_io_file_control(
     p_arg: *mut c_void,
 ) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xFileControl.unwrap()(&mut file.real, op, p_arg)
+    (*file.real.pMethods).xFileControl.unwrap()(&mut file.real, op, p_arg)
 }
 
 unsafe extern "C" fn mvfs_io_sector_size(pfile: *mut ffi::sqlite3_file) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xSectorSize.unwrap()(&mut file.real)
+    (*file.real.pMethods).xSectorSize.unwrap()(&mut file.real)
 }
 
 unsafe extern "C" fn mvfs_io_device_characteristics(pfile: *mut ffi::sqlite3_file) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
-    (&*file.real.pMethods).xDeviceCharacteristics.unwrap()(&mut file.real)
+    (*file.real.pMethods).xDeviceCharacteristics.unwrap()(&mut file.real)
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn sqlite3_mycelite_init(
     db: *mut ffi::sqlite3,
     err: *mut *mut c_char,
@@ -449,12 +451,12 @@ pub unsafe fn sqlite3_mycelite_init(
     libsqlite_sys::init!(api);
 
     MclVFS::init(
-        (&*SQLITE3_API)
+        (*SQLITE3_API)
             .vfs_find
             .map(|f| f(ptr::null_mut()))
             .unwrap(),
     );
-    (&*SQLITE3_API)
+    (*SQLITE3_API)
         .vfs_register
         .map(|f| f(MclVFS::as_base(), 1));
 

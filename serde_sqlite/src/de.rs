@@ -44,7 +44,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 1];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i8(i8::from_be_bytes(buf))
     }
 
@@ -53,7 +53,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 2];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i16(i16::from_be_bytes(buf))
     }
 
@@ -62,7 +62,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 4];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i32(i32::from_be_bytes(buf))
     }
 
@@ -71,7 +71,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 8];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i64(i64::from_be_bytes(buf))
     }
 
@@ -80,7 +80,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 1];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_u8(u8::from_be_bytes(buf))
     }
 
@@ -89,7 +89,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 2];
-        self.reader.read_exact(&mut buf.as_mut_slice())?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_u16(u16::from_be_bytes(buf))
     }
 
@@ -98,7 +98,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 4];
-        self.reader.read_exact(&mut buf.as_mut_slice())?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_u32(u32::from_be_bytes(buf))
     }
 

@@ -7,11 +7,11 @@ use quote::ToTokens;
 /// for enums block size should not be specified, tag value is always u32 (due to serde)
 fn extract_block_size(args: &syn::AttributeArgs) -> Option<usize> {
     match args.as_slice() {
-        &[] => None,
-        &[syn::NestedMeta::Lit(syn::Lit::Int(ref int))] => {
+        [] => None,
+        [syn::NestedMeta::Lit(syn::Lit::Int(ref int))] => {
             Some(int.base10_parse::<usize>().expect("invalid block size"))
         }
-        &[_] => panic!("expected integer literal"),
+        [_] => panic!("expected integer literal"),
         _ => panic!("unexpected number of arguments"),
     }
 }

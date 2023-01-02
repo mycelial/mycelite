@@ -9,7 +9,6 @@ use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use ureq;
 
 enum Message {
     /// New snapshot added locally
@@ -91,7 +90,7 @@ impl Replicator {
     ///
     /// just dumbly polls remote backend and bothers main thread. A lot.
     fn enter_remote_loop(tx: &mut Sender<Message>, rx: &mut Receiver<Message>, url: &str) {
-        let url = &format!("{}/api/v0/snapshots", url);
+        let url = &format!("{url}/api/v0/snapshots");
         loop {
             if let Ok(v) = Self::get_backend_current_snapshot(url) {
                 tx.send(Message::NewRemoteSnapshot).ok();
@@ -171,7 +170,7 @@ impl Replicator {
     fn restore_latest_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let lock = self.lock.lock().map_err(|e| "failed to lock")?;
         let mut output = std::io::BufWriter::with_capacity(
-            0x100_000,
+            0x0010_0000,
             std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -193,7 +192,7 @@ impl Replicator {
             .call()?;
 
         match res.header("x-snapshot-id") {
-            Some(value) if value.len() == 0 => Ok(None),
+            Some(value) if value.is_empty() => Ok(None),
             Some(value) => Ok(Some(value.parse()?)),
             None => Err("backend didn't return x-snapshot-id".into()),
         }

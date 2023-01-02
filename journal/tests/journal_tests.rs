@@ -62,7 +62,7 @@ impl Arbitrary for TestSnapshot {
         Box::new(
             self.pages
                 .shrink()
-                .filter(|pages| pages.len() > 0) // snapshot with zero pages is an invalid input
+                .filter(|pages| pages.len() > 0) // snapshot with no pages is not valid input
                 .map(|pages| TestSnapshot { pages }),
         )
     }

@@ -2,7 +2,6 @@
 
 use crate::error::Error;
 use block::{block, Block};
-use chrono;
 use serde::{Deserialize, Serialize};
 use serde_sqlite::{from_reader, to_bytes};
 use std::fs;
@@ -39,7 +38,7 @@ impl<F> Fd<F, BufWriter<F>, BufReader<F>>
 where
     F: Read + Write + Seek,
 {
-    fn to_fd(&mut self) -> F {
+    fn as_fd(&mut self) -> F {
         match std::mem::replace(self, Self::Nada) {
             Self::Reader(fd) => fd.into_inner(),
             Self::Writer(fd) => fd.into_parts().0,
@@ -49,25 +48,25 @@ where
     }
 
     /// Swith Fd to 'raw' mode
-    pub fn to_raw(&mut self) {
-        let fd = self.to_fd();
+    pub fn as_raw(&mut self) {
+        let fd = self.as_fd();
         let _ = std::mem::replace(self, Fd::Raw(fd));
     }
 
     /// Switch Fd to buffered write mode
-    pub fn to_writer(&mut self) {
-        let fd = self.to_fd();
+    pub fn as_writer(&mut self) {
+        let fd = self.as_fd();
         // FIXME: hardcoded buffer size (1 MB)
         // FIXME: buffer allocation is not checked
-        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(0x100_000, fd)));
+        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(0x0010_0000, fd)));
     }
 
     /// Switch Fd to buffered read mode
-    pub fn to_reader(&mut self) {
-        let fd = self.to_fd();
+    pub fn as_reader(&mut self) {
+        let fd = self.as_fd();
         // FIXME: hardcoded buffer size (1 MB)
         // FIXME: buffer capacity is not checked
-        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(0x100_000, fd)));
+        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(0x0010_0000, fd)));
     }
 }
 
@@ -113,13 +112,12 @@ impl<F: Read, W, R: Read> Read for Fd<F, W, R> {
 
 impl<F: Seek, W: Seek, R: Seek> Seek for Fd<F, W, R> {
     fn seek(&mut self, seek: SeekFrom) -> std::io::Result<u64> {
-        let res = match self {
+        match self {
             Self::Raw(fd) => fd.seek(seek),
             Self::Reader(fd) => fd.seek(seek),
             Self::Writer(fd) => fd.seek(seek),
             Self::Nada => unreachable!(),
-        };
-        res
+        }
     }
 }
 
@@ -167,7 +165,7 @@ impl<F: Read + Write + Seek> Journal<F> {
             self.header.snapshot_counter,
             chrono::Utc::now().timestamp_micros(),
         );
-        Ok(self.add_snapshot(&snapshot_header)?)
+        self.add_snapshot(&snapshot_header)
     }
 
     /// Add new sqlite page
@@ -179,7 +177,7 @@ impl<F: Read + Write + Seek> Journal<F> {
         };
         let page_num = self.page_count.unwrap();
         let page_header = PageHeader::new(offset, page_num, page.len() as u32);
-        Ok(self.add_page(&page_header, page)?)
+        self.add_page(&page_header, page)
     }
 
     /// Add snapshot
@@ -191,8 +189,8 @@ impl<F: Read + Write + Seek> Journal<F> {
             });
         }
         self.fd.seek(SeekFrom::Start(self.header.eof))?;
-        self.fd.to_writer();
-        self.fd.write(&to_bytes(snapshot_header)?)?;
+        self.fd.as_writer();
+        self.fd.write_all(&to_bytes(snapshot_header)?)?;
         self.page_count = Some(0);
         Ok(())
     }
@@ -205,7 +203,7 @@ impl<F: Read + Write + Seek> Journal<F> {
                 page_count: self.page_count,
             });
         }
-        self.page_count.as_mut().map(|x| *x += 1);
+        self.page_count.as_mut().map(|x| { *x += 1; *x });
         self.fd.write_all(&to_bytes(page_header)?)?;
         self.fd.write_all(page)?;
         Ok(())
@@ -227,11 +225,11 @@ impl<F: Read + Write + Seek> Journal<F> {
         self.page_count = None;
 
         self.header.snapshot_counter += 1;
-        self.header.eof = self.fd.seek(SeekFrom::Current(0))?;
+        self.header.eof = self.fd.stream_position()?;
 
         Self::write_header(&mut self.fd, &self.header)?;
         self.fd.flush()?;
-        self.fd.to_raw();
+        self.fd.as_raw();
         Ok(())
     }
 
@@ -250,7 +248,7 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Update journal header
     pub fn update_header(&mut self) -> Result<()> {
-        self.fd.to_reader();
+        self.fd.as_reader();
         self.header = Self::read_header(&mut self.fd)?;
         Ok(())
     }
@@ -336,7 +334,7 @@ where
                     return Some(Err(e.into()));
                 }
             };
-            self.journal.fd.to_reader();
+            self.journal.fd.as_reader();
             self.initialized = true;
         }
         if self.eoi {

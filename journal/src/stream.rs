@@ -1,4 +1,4 @@
-//! Journal Stream/Deserializer into Protocol
+//! Streaming protocol for journal
 
 use crate::error::Error as JournalError;
 use crate::journal::{IntoIter, Journal, PageHeader, SnapshotHeader};
@@ -49,7 +49,7 @@ pub struct Stream<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> {
 }
 
 // stream, which starts from 'scratch'
-impl<'b, 'a: 'b, F: Read + Write + Seek> From<&'a mut Journal<F>> for Stream<'a, IntoIter<'a, F>> {
+impl<'a, F: Read + Write + Seek> From<&'a mut Journal<F>> for Stream<'a, IntoIter<'a, F>> {
     fn from(journal: &'a mut Journal<F>) -> Self {
         Stream::new(journal.into_iter())
     }
@@ -102,7 +102,7 @@ impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> BufRead for Strea
             return Ok(&self.buf[self.read..]);
         } else {
             self.read = 0;
-            self.buf.resize(0, 0);
+            self.buf.clear();
         }
         match self.iter.next() {
             Some(Ok((snapshot_h, page_h, page))) => {
@@ -164,6 +164,6 @@ impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> Read for Stream<'
             write_buf_len -= written;
             self.consume(written);
         }
-        return Ok(total);
+        Ok(total)
     }
 }
