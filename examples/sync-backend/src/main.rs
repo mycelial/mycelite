@@ -20,12 +20,12 @@
 use axum::{
     extract::{BodyStream, Path, State, Query},
     response,
-    routing::{get, head, post},
+    routing::{get},
     Router, Server,
 };
 use futures::StreamExt;
 use journal::{Journal, Protocol, Stream};
-use serde_sqlite::{se, de};
+use serde_sqlite::{de};
 use std::io::Read;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,7 +33,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use serde::Deserialize;
 
 fn to_error<T: std::fmt::Debug>(e: T) -> String {
-    format!("{:?}", e)
+    format!("{e:?}")
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -85,7 +85,7 @@ async fn head_snapshot(
 ) -> Result<impl response::IntoResponse, String> {
     let journal = state.journal.lock().await;
     let snapshot_id = match journal.current_snapshot() {
-        Some(v) => format!("{}", v),
+        Some(v) => format!("{v}"),
         None => "".into(),
     };
     let headers = response::AppendHeaders([("x-snapshot-id", snapshot_id)]);
@@ -96,7 +96,7 @@ async fn head_snapshot(
 async fn get_snapshot(
     State(state): State<AppState>,
     params: Option<Query<Params>>,
-    snapshot_id: Option<Path<u64>>,
+    _snapshot_id: Option<Path<u64>>,
 ) -> Result<impl response::IntoResponse, String> {
     let snapshot_id: u64 = params.unwrap_or_default().snapshot_id;
     let mut journal = state.journal.lock().await;
@@ -117,7 +117,7 @@ impl AppState {
     fn new() -> Self {
         let journal_path = "/tmp/journal";
         let journal = Journal::try_from(journal_path)
-            .or_else(|_e| Journal::create(&journal_path))
+            .or_else(|_e| Journal::create(journal_path))
             .unwrap();
         Self {
             journal: Arc::new(Mutex::new(journal)),
