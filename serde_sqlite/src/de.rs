@@ -2,7 +2,9 @@
 
 use crate::error::Error;
 use block::Block;
-use serde::{de, de::Visitor, Deserialize, Deserializer};
+use serde::{
+    de, de::DeserializeSeed, de::IntoDeserializer, de::Visitor, Deserialize, Deserializer,
+};
 use std::io::Read;
 
 struct SqliteDe<R> {
@@ -42,7 +44,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 1];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i8(i8::from_be_bytes(buf))
     }
 
@@ -51,7 +53,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 2];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i16(i16::from_be_bytes(buf))
     }
 
@@ -60,7 +62,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 4];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i32(i32::from_be_bytes(buf))
     }
 
@@ -69,7 +71,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 8];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_i64(i64::from_be_bytes(buf))
     }
 
@@ -78,7 +80,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 1];
-        self.reader.read_exact(&mut buf)?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_u8(u8::from_be_bytes(buf))
     }
 
@@ -87,7 +89,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 2];
-        self.reader.read_exact(&mut buf.as_mut_slice())?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_u16(u16::from_be_bytes(buf))
     }
 
@@ -96,7 +98,7 @@ where
         V: Visitor<'de>,
     {
         let mut buf = [0; 4];
-        self.reader.read_exact(&mut buf.as_mut_slice())?;
+        self.reader.read_exact(buf.as_mut_slice())?;
         v.visit_u32(u32::from_be_bytes(buf))
     }
 
@@ -241,12 +243,12 @@ where
         self,
         _name: &str,
         _variants: &[&str],
-        _v: V,
+        v: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        Err(Error::Unsupported("Deserializer::deserialize_enum"))
+        v.visit_enum(EnumAccess::new(self))
     }
 
     fn deserialize_identifier<V>(self, _v: V) -> Result<V::Value, Self::Error>
@@ -264,7 +266,85 @@ where
     }
 }
 
-/// SeqAccess for Visitor
+struct EnumAccess<'a, R: 'a> {
+    de: &'a mut SqliteDe<R>,
+}
+
+impl<'a, R> EnumAccess<'a, R> {
+    fn new(de: &'a mut SqliteDe<R>) -> Self {
+        Self { de }
+    }
+}
+
+impl<'a, 'de, R: Read> de::EnumAccess<'de> for EnumAccess<'a, R> {
+    type Error = Error;
+    type Variant = VariantAccess<'a, R>;
+
+    fn variant<V>(self) -> Result<(V, Self::Variant), Self::Error>
+    where
+        V: Deserialize<'de>,
+    {
+        let mut buf = [0_u8; 4];
+        self.de.reader.read_exact(&mut buf)?;
+        let tag = u32::from_be_bytes(buf) as u64;
+        let de = IntoDeserializer::<Error>::into_deserializer(tag);
+        let tag = V::deserialize(de)?;
+        Ok((tag, VariantAccess { de: self.de }))
+    }
+
+    fn variant_seed<V>(self, _seed: V) -> Result<(V::Value, Self::Variant), Error>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        Err(Error::Unsupported("EnumAccess::variant_seed"))
+    }
+}
+
+struct VariantAccess<'a, R: 'a> {
+    de: &'a mut SqliteDe<R>,
+}
+
+impl<'a, 'de, R: Read> de::VariantAccess<'de> for VariantAccess<'a, R> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<(), Self::Error> {
+        Err(Error::Unsupported("VariantAccess::unit_variant"))
+    }
+
+    fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value, Self::Error>
+    where
+        T: DeserializeSeed<'de>,
+    {
+        Err(Error::Unsupported("VariantAccess::newtype_variant_seed"))
+    }
+
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(Error::Unsupported("VariantAccess::tuple_variant"))
+    }
+
+    fn struct_variant<V>(
+        self,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(Error::Unsupported("VariantAccess::struct_variant"))
+    }
+
+    fn newtype_variant<T>(self) -> Result<T, Self::Error>
+    where
+        T: Deserialize<'de>,
+    {
+        T::deserialize(self.de)
+    }
+}
+
+/// SeqAccess Visitor
 struct SeqAccess<'a, R: 'a> {
     de: &'a mut SqliteDe<R>,
     len: usize,
@@ -293,6 +373,33 @@ impl<'a, 'de, R: Read> de::SeqAccess<'de> for SeqAccess<'a, R> {
     }
 }
 
+struct CountingReader<R: Read> {
+    reader: R,
+    read: usize,
+}
+
+impl<R: std::io::Read> CountingReader<R> {
+    fn new(reader: R) -> Self {
+        Self { reader, read: 0 }
+    }
+
+    fn discard_padding(&mut self, left: usize) -> std::io::Result<()> {
+        if left == 0 {
+            return Ok(());
+        }
+        let mut buf = vec![0; left];
+        self.read_exact(buf.as_mut_slice())?;
+        Ok(())
+    }
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.reader.read(buf)?;
+        self.read += read;
+        Ok(read)
+    }
+}
 
 /// Deserialize default value (zero) as None
 pub fn zero_as_none<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
@@ -314,15 +421,13 @@ where
     from_reader(input)
 }
 
-pub fn from_reader<'de, T, R>(mut reader: R) -> Result<T, Error>
+pub fn from_reader<'de, T, R>(reader: R) -> Result<T, Error>
 where
     T: Deserialize<'de> + Block,
     R: Read,
 {
-    let mut buf = Vec::<u8>::new();
-    buf.try_reserve(T::block_size())
-        .map_err(Error::OutOfMemory)?;
-    buf.resize(T::block_size(), 0);
-    reader.read_exact(&mut buf).map_err(Error::IoError)?;
-    T::deserialize(&mut SqliteDe::from_reader(std::io::Cursor::new(buf)))
+    let mut cbr = CountingReader::new(reader);
+    let res = T::deserialize(&mut SqliteDe::from_reader(&mut cbr))?;
+    cbr.discard_padding(res.iblock_size() - cbr.read)?;
+    Ok(res)
 }

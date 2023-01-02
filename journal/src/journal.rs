@@ -2,7 +2,6 @@
 
 use crate::error::Error;
 use block::{block, Block};
-use chrono;
 use serde::{Deserialize, Serialize};
 use serde_sqlite::{from_reader, to_bytes};
 use std::fs;
@@ -39,7 +38,7 @@ impl<F> Fd<F, BufWriter<F>, BufReader<F>>
 where
     F: Read + Write + Seek,
 {
-    fn to_fd(&mut self) -> F {
+    fn as_fd(&mut self) -> F {
         match std::mem::replace(self, Self::Nada) {
             Self::Reader(fd) => fd.into_inner(),
             Self::Writer(fd) => fd.into_parts().0,
@@ -49,25 +48,25 @@ where
     }
 
     /// Swith Fd to 'raw' mode
-    pub fn to_raw(&mut self) {
-        let fd = self.to_fd();
+    pub fn as_raw(&mut self) {
+        let fd = self.as_fd();
         let _ = std::mem::replace(self, Fd::Raw(fd));
     }
 
     /// Switch Fd to buffered write mode
-    pub fn to_writer(&mut self) {
-        let fd = self.to_fd();
+    pub fn as_writer(&mut self) {
+        let fd = self.as_fd();
         // FIXME: hardcoded buffer size (1 MB)
         // FIXME: buffer allocation is not checked
-        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(0x100_000, fd)));
+        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(0x0010_0000, fd)));
     }
 
     /// Switch Fd to buffered read mode
-    pub fn to_reader(&mut self) {
-        let fd = self.to_fd();
+    pub fn as_reader(&mut self) {
+        let fd = self.as_fd();
         // FIXME: hardcoded buffer size (1 MB)
         // FIXME: buffer capacity is not checked
-        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(0x100_000, fd)));
+        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(0x0010_0000, fd)));
     }
 }
 
@@ -125,68 +124,87 @@ impl<F: Seek, W: Seek, R: Seek> Seek for Fd<F, W, R> {
 impl Journal<fs::File> {
     /// Create new journal
     pub fn create<P: AsRef<path::Path>>(p: P) -> Result<Self> {
-        let mut fd = fs::OpenOptions::new()
+        let fd = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
             .open(p.as_ref())?;
-        let header = Header::default();
-        Self::write_header(&mut fd, &header)?;
-        Ok(Self {
-            header,
-            fd: Fd::Raw(fd),
-            page_count: None,
-        })
+        Self::new(Header::default(), fd, None)
     }
 
     /// Try to instantiate journal from given path
-    ///
-    /// FIXME: move to TryFrom trait impl
     pub fn try_from<P: AsRef<path::Path>>(p: P) -> Result<Self> {
         let mut fd = fs::OpenOptions::new().write(true).read(true).open(p)?;
         let header = Self::read_header(&mut fd)?;
-        Ok(Self {
-            header,
-            fd: Fd::Raw(fd),
-            page_count: None,
-        })
+        Self::new(header, fd, None)
     }
 }
 
 impl<F: Read + Write + Seek> Journal<F> {
+    /// initiate journal & force header write
+    pub fn new(header: Header, mut fd: F, page_count: Option<u32>) -> Result<Self> {
+        Self::write_header(&mut fd, &header)?;
+        let fd = Fd::Raw(fd);
+        Ok(Self {
+            header,
+            fd,
+            page_count,
+        })
+    }
+
     /// Initiate snapshot
     ///
     /// * to initiate snapshot we seek to current end of the file (value stored in header)
     /// * switch fd to buffered mode
     /// * write snapshot header with current header counter number
-    pub fn snapshot(&mut self) -> Result<()> {
+    pub fn new_snapshot(&mut self) -> Result<()> {
         if self.page_count.is_some() {
             return Ok(());
         }
-        self.fd.seek(SeekFrom::Start(self.header.eof))?;
-        self.fd.to_writer();
-        self.fd.write(&to_bytes(&SnapshotHeader::new(
+        let snapshot_header = SnapshotHeader::new(
             self.header.snapshot_counter,
             chrono::Utc::now().timestamp_micros(),
-        ))?)?;
+        );
+        self.add_snapshot(&snapshot_header)
+    }
+
+    /// Add new sqlite page
+    ///
+    /// Automatically starts new snapshot if there is none
+    pub fn new_page(&mut self, offset: u64, page: &[u8]) -> Result<()> {
+        if !self.snapshot_started() {
+            self.new_snapshot()?;
+        };
+        let page_num = self.page_count.unwrap();
+        let page_header = PageHeader::new(offset, page_num, page.len() as u32);
+        self.add_page(&page_header, page)
+    }
+
+    /// Add snapshot
+    pub fn add_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
+        if snapshot_header.id != self.header.snapshot_counter {
+            return Err(Error::OutOfOrderSnapshot {
+                snapshot_id: snapshot_header.id,
+                journal_snapshot_id: self.header.snapshot_counter,
+            });
+        }
+        self.fd.seek(SeekFrom::Start(self.header.eof))?;
+        self.fd.as_writer();
+        self.fd.write_all(&to_bytes(snapshot_header)?)?;
         self.page_count = Some(0);
         Ok(())
     }
 
-    /// Add sqlite page
-    ///
-    /// Automatically starts new snapshot if there is none
-    pub fn add_page(&mut self, offset: u64, page: &[u8]) -> Result<()> {
-        if !self.snapshot_started() {
-            self.snapshot()?;
-        };
-        let page_num = self.page_count.unwrap();
-        self.page_count.as_mut().map(|x| *x += 1);
-        self.fd.write_all(&to_bytes(&PageHeader::new(
-            offset,
-            page_num,
-            page.len() as u32,
-        ))?)?;
+    /// Add page
+    pub fn add_page(&mut self, page_header: &PageHeader, page: &[u8]) -> Result<()> {
+        if Some(page_header.page_num) != self.page_count {
+            return Err(Error::OutOfOrderPage {
+                page_num: page_header.page_num,
+                page_count: self.page_count,
+            });
+        }
+        self.page_count.as_mut().map(|x| { *x += 1; *x });
+        self.fd.write_all(&to_bytes(page_header)?)?;
         self.fd.write_all(page)?;
         Ok(())
     }
@@ -207,11 +225,11 @@ impl<F: Read + Write + Seek> Journal<F> {
         self.page_count = None;
 
         self.header.snapshot_counter += 1;
-        self.header.eof = self.fd.seek(SeekFrom::Current(0))?;
+        self.header.eof = self.fd.stream_position()?;
 
         Self::write_header(&mut self.fd, &self.header)?;
         self.fd.flush()?;
-        self.fd.to_raw();
+        self.fd.as_raw();
         Ok(())
     }
 
@@ -228,10 +246,9 @@ impl<F: Read + Write + Seek> Journal<F> {
         }
     }
 
-    // FIXME: this function was added as a hack to speedup process of demo development
-    // remove it once it's not needed anymore
+    /// Update journal header
     pub fn update_header(&mut self) -> Result<()> {
-        self.fd.to_reader();
+        self.fd.as_reader();
         self.header = Self::read_header(&mut self.fd)?;
         Ok(())
     }
@@ -261,35 +278,65 @@ impl<F: Read + Write + Seek> Journal<F> {
 }
 
 #[derive(Debug)]
-pub struct IntoIter<'a> {
-    journal: &'a mut Journal,
+pub struct IntoIter<'a, F = fs::File>
+where
+    F: Read + Write + Seek,
+{
+    journal: &'a mut Journal<F>,
     current_snapshot: Option<SnapshotHeader>,
+    initialized: bool,
     eoi: bool,
 }
 
-impl<'a> IntoIterator for &'a mut Journal {
-    type IntoIter = IntoIter<'a>;
+impl<'a, F: Write + Read + Seek> IntoIter<'a, F> {
+    pub fn skip_snapshots(
+        self,
+        skip: u64,
+    ) -> impl Iterator<Item = <IntoIter<'a, F> as Iterator>::Item> {
+        self.filter(move |s| match s {
+            Ok((ref snapshot_h, _, _)) => snapshot_h.id >= skip,
+            _ => false,
+        })
+    }
+}
+
+impl<'a, F: Read + Write + Seek> IntoIterator for &'a mut Journal<F> {
+    type IntoIter = IntoIter<'a, F>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
     fn into_iter<'b>(self) -> Self::IntoIter {
-        // offset to first snapshot
-        self.fd
-            .seek(SeekFrom::Start(Header::block_size() as u64))
-            .ok();
-        self.fd.to_reader();
         let eoi = self.header.snapshot_counter == 0;
         IntoIter {
             journal: self,
+            initialized: false,
             current_snapshot: None,
             eoi,
         }
     }
 }
 
-impl<'a> Iterator for IntoIter<'a> {
+impl<'a, F> Iterator for IntoIter<'a, F>
+where
+    F: Read + Write + Seek,
+{
     type Item = Result<(SnapshotHeader, PageHeader, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if !self.initialized {
+            match self
+                .journal
+                .fd
+                .seek(SeekFrom::Start(Header::block_size() as u64))
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    self.eoi = true;
+                    return Some(Err(e.into()));
+                }
+            };
+            self.journal.fd.as_reader();
+            self.initialized = true;
+        }
         if self.eoi {
             return None;
         }
@@ -310,7 +357,7 @@ impl<'a> Iterator for IntoIter<'a> {
             }
         };
         if page_header.is_last() {
-            if self.current_snapshot.as_ref().unwrap().num + 1
+            if self.current_snapshot.as_ref().unwrap().id + 1
                 == self.journal.header.snapshot_counter
             {
                 self.eoi = true;
@@ -345,7 +392,7 @@ impl<'a> Iterator for IntoIter<'a> {
 }
 
 /// Journal Header
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[block(128)]
 pub struct Header {
     /// magic header
@@ -373,13 +420,13 @@ impl Default for Header {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(32)]
 pub struct SnapshotHeader {
-    pub num: u64,
+    pub id: u64,
     pub timestamp: i64,
 }
 
 impl SnapshotHeader {
-    pub fn new(num: u64, timestamp: i64) -> Self {
-        Self { num, timestamp }
+    pub fn new(id: u64, timestamp: i64) -> Self {
+        Self { id, timestamp }
     }
 }
 

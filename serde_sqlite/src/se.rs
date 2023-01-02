@@ -6,7 +6,7 @@ use serde::{
     ser::SerializeTuple, ser::SerializeTupleStruct, ser::SerializeTupleVariant, Serialize,
     Serializer,
 };
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 struct SqliteSe<W: Write> {
     writer: W,
@@ -141,11 +141,12 @@ impl<'a, W: Write> Serializer for &'a mut SqliteSe<W> {
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
         self,
         _name: &str,
-        _variant_index: u32,
+        variant_index: u32,
         _variant: &str,
-        _value: &T,
+        value: &T,
     ) -> Result<Self::Ok, Self::Error> {
-        Err(Error::Unsupported("Serializer::serialize_newtype_variant"))
+        self.writer.write_all(&variant_index.to_be_bytes())?;
+        value.serialize(self)
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -331,22 +332,76 @@ where
     value.serialize(s)
 }
 
+struct CountingBufWriter<W: Write> {
+    writer: BufWriter<W>,
+    written: usize,
+    block_size: usize,
+}
+
+impl<W: Write> CountingBufWriter<W> {
+    fn new(writer: W, block_size: usize) -> Self {
+        Self {
+            writer: BufWriter::new(writer),
+            written: 0,
+            block_size,
+        }
+    }
+
+    fn pad(&mut self) -> std::io::Result<()> {
+        let mut left = self.block_size - self.written;
+        if left == 0 {
+            return Ok(());
+        }
+        let buf_size = 4096;
+        let mut buf = vec![0; 4096];
+        while left > 0 {
+            let to_write = buf_size.min(left);
+            // *safe* since vec is pre-allocated and initialized
+            unsafe { buf.set_len(to_write) };
+            self.write_all(buf.as_mut_slice())?;
+            left -= to_write
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> Write for CountingBufWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.written + buf.len() > self.block_size {
+            // FIXME:
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "block size overflow",
+            ));
+        }
+        let written = self.writer.write(buf)?;
+        self.written += written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+
 pub fn to_bytes<T>(value: &T) -> Result<Vec<u8>, Error>
 where
     T: Serialize + Block,
 {
     let mut buf = Vec::<u8>::new();
-    buf.try_reserve(T::block_size())
+    buf.try_reserve(value.iblock_size())
         .map_err(Error::OutOfMemory)?;
-    buf.resize(T::block_size(), 0);
+    buf.resize(value.iblock_size(), 0);
     to_writer(buf.as_mut_slice(), value)?;
     Ok(buf)
 }
 
-// FIXME: this func doesn't perform write for a whole block, so not pub.
-fn to_writer<T, W: Write>(writer: W, value: &T) -> Result<(), Error>
+pub fn to_writer<T, W: Write>(writer: W, value: &T) -> Result<(), Error>
 where
-    T: Serialize,
+    T: Serialize + Block,
 {
-    value.serialize(&mut SqliteSe { writer })
+    let mut cbw = CountingBufWriter::new(writer, value.iblock_size());
+    value.serialize(&mut SqliteSe { writer: &mut cbw })?;
+    cbw.pad()?;
+    Ok(cbw.flush()?)
 }

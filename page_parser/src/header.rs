@@ -2,7 +2,6 @@
 
 use block::block;
 use serde::{Deserialize, Serialize};
-use serde_sqlite;
 
 /// sqlite database header
 #[derive(Debug, Clone, Serialize, Deserialize)]
