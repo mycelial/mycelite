@@ -1,3 +1,4 @@
+![tests](https://github.com/mycelial/mycelite/actions/workflows/tests.yml/badge.svg)
 # Mycelite
 
 ## What is Mycelite?
