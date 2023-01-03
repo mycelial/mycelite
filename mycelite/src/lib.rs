@@ -9,7 +9,6 @@ use libsqlite_sys::c_str;
 use libsqlite_sys::ffi;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::mem;
-use std::os::unix::fs::FileExt;
 use std::ptr;
 use std::sync::{Arc, Mutex, MutexGuard};
 

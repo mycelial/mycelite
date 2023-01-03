@@ -1,0 +1,51 @@
+name: Tests
+
+on: [push]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run tests
+      run: |
+        cargo test --verbose
+        cargo test --release --verbose
+
+  macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run tests
+      run: |
+        cargo test --verbose
+        cargo test --release --verbose
+
+  windows:
+    runs-on: windows-latest
+    env:
+      SQLITE_URL: "https://www.sqlite.org/2022/sqlite-amalgamation-3400100.zip"
+      PKG_CONFIG_PATH: "C:/sqlite3/sqlite-amalgamation-3400100/"
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: install pkg-config, download and extract sqlite amalgamation, setup pkg-config file for sqlite3
+      run: |
+        choco install -y pkgconfiglite
+        mkdir C:\sqlite3\
+        curl $env:SQLITE_URL -o C:\sqlite3\sqlite3.zip
+        Expand-Archive C:\sqlite3\sqlite3.zip -DestinationPath C:\sqlite3\
+        @"
+        Name: sqlite3
+        Description: sqlite3 amalgamation
+        Version: 3.40.1
+        Cflags: -I${env:PKG_CONFIG_PATH}
+        Libs:
+        "@ > $env:PKG_CONFIG_PATH\sqlite3.pc
+    - name: Run tests
+      run: |
+       cargo test --verbose
+       cargo test --release --verbose
