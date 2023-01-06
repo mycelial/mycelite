@@ -63,7 +63,7 @@ jobs:
       - name: install packages (windows)
         if: matrix.build == 'windows'
         run: |
-          choco install -y pkgconfiglite
+          choco install -y --no-progress --allow-empty-checksums --fail-on-stderr pkgconfiglite
 
           $env:PKG_CONFIG_PATH="C:/sqlite3/sqlite-amalgamation-3400100/"
           $env:SQLITE_URL="https://www.sqlite.org/2022/sqlite-amalgamation-3400100.zip"
@@ -103,6 +103,13 @@ jobs:
           export ARTIFACT_NAME=${{ matrix.target }}.tgz
           tar -czf $ARTIFACT_NAME -C "./target/${{ matrix.target }}/release/" libmycelite.dylib
           echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
+
+      - name: build archive
+        if: matrix.build == 'windows'
+        run: |
+          $env:ARTIFACT_NAME="${{ matrix.target }}.zip"
+          Compress-Archive -Path .\target\release\block_macro.dll -DestinationPath $env:ARTIFACT_NAME
+          echo "ARTIFACT_NAME=$env:ARTIFACT_NAME" >> $env:GITHUB_ENV
 
       - name: release
         uses: ncipollo/release-action@v1
