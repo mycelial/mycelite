@@ -34,7 +34,8 @@ jobs:
     - uses: actions/checkout@v3
     - name: install pkg-config, download and extract sqlite amalgamation, setup pkg-config file for sqlite3
       run: |
-        choco install -y pkgconfiglite
+        choco install -y --no-progress --allow-empty-checksums --fail-on-stderr pkgconfiglite
+
         mkdir C:\sqlite3\
         curl $env:SQLITE_URL -o C:\sqlite3\sqlite3.zip
         Expand-Archive C:\sqlite3\sqlite3.zip -DestinationPath C:\sqlite3\
