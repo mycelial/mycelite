@@ -25,6 +25,9 @@ fn main() {
     }
 
     let pkg_conf = pkg_config::Config::new()
+        .print_system_cflags(false)
+        .print_system_libs(false)
+        .cargo_metadata(false)
         .probe("sqlite3")
         .expect("installation of sqlite3 required");
 
