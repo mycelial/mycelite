@@ -53,6 +53,7 @@ jobs:
       - name: install packages (linux)
         if: matrix.build == 'linux'
         run: |
+          sudo apt update
           sudo apt install libsqlite3-dev gcc-arm-linux-gnueabihf musl-tools -qy
 
       - name: install packages (macos)
