@@ -85,7 +85,7 @@ In a new terminal, start a SQLite writer instance with the following command:
 
 ```
 cd mycelite
-MYCELIAL_WRITER=true sqlite3
+sqlite3
 ```
 
 After SQLite's CLI opens, load the extension and open the database with the
@@ -93,7 +93,7 @@ following commands:
 
 ```
 .load ./target/release/libmycelite
-.open writer.db
+.open file:writer.db?vfs=mycelite_writer
 ```
 
 #### SQLite Reader
@@ -102,7 +102,7 @@ In a new terminal, start a SQLite reader instance with the following command:
 
 ```bash
 cd mycelite
-MYCELIAL_WRITER=false sqlite3
+sqlite3
 ```
 
 After SQLite's CLI opens, load the extension and open the database with the
