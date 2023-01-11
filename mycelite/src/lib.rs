@@ -23,7 +23,6 @@ macro_rules! vfs_vtable {
             // initialized on extention load
             mxPathname: 0,
             pNext: ptr::null_mut(),
-            // initialized on extention load
             zName: c_str!($name),
             pAppData: ptr::null_mut(),
             xOpen: Some(mvfs_open),
