@@ -14,64 +14,84 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 libsqlite_sys::setup!();
 
+macro_rules! vfs_vtable {
+    ($name:expr) => {
+        ffi::sqlite3_vfs {
+            iVersion: 2,
+            // initialized on extention load
+            szOsFile: 0,
+            // initialized on extention load
+            mxPathname: 0,
+            pNext: ptr::null_mut(),
+            // initialized on extention load
+            zName: c_str!($name),
+            pAppData: ptr::null_mut(),
+            xOpen: Some(mvfs_open),
+            xDelete: Some(mvfs_delete),
+            xAccess: Some(mvfs_access),
+            xFullPathname: Some(mvfs_full_pathname),
+            xDlOpen: Some(mvfs_dlopen),
+            xDlError: Some(mvfs_dlerror),
+            xDlSym: Some(mvfs_dlsym),
+            xDlClose: Some(mvfs_dlclose),
+            xRandomness: Some(mvfs_randomness),
+            xSleep: Some(mvfs_sleep),
+            xCurrentTime: Some(mvfs_current_time),
+            xGetLastError: Some(mvfs_get_last_error),
+            xCurrentTimeInt64: Some(mvfs_current_time_i64),
+            xSetSystemCall: None,
+            xGetSystemCall: None,
+            xNextSystemCall: None,
+        }
+    }
+}
+
 #[repr(C)]
+#[derive(Debug)]
 struct MclVFS {
     base: ffi::sqlite3_vfs,
+    read_only: bool,
+    // initialized on extention load
     real: *mut ffi::sqlite3_vfs,
 }
 
 #[no_mangle]
 #[used]
-static mut MclVFS: MclVFS = MclVFS {
-    base: ffi::sqlite3_vfs {
-        iVersion: 2,
-        // initialized on extention load
-        szOsFile: 0,
-        // initialized on extention load
-        mxPathname: 0,
-        pNext: ptr::null_mut(),
-        zName: c_str!("mycelite"),
-        pAppData: ptr::null_mut(),
-        xOpen: Some(mvfs_open),
-        xDelete: Some(mvfs_delete),
-        xAccess: Some(mvfs_access),
-        xFullPathname: Some(mvfs_full_pathname),
-        xDlOpen: Some(mvfs_dlopen),
-        xDlError: Some(mvfs_dlerror),
-        xDlSym: Some(mvfs_dlsym),
-        xDlClose: Some(mvfs_dlclose),
-        xRandomness: Some(mvfs_randomness),
-        xSleep: Some(mvfs_sleep),
-        xCurrentTime: Some(mvfs_current_time),
-        xGetLastError: Some(mvfs_get_last_error),
-        xCurrentTimeInt64: Some(mvfs_current_time_i64),
-        xSetSystemCall: None,
-        xGetSystemCall: None,
-        xNextSystemCall: None,
-    },
+static mut MclVFSReader: MclVFS = MclVFS {
+    base: vfs_vtable!("mycelite_reader"),
+    read_only: true,
     // initialized on extention load
-    real: ptr::null_mut(),
+    real: ptr::null_mut()
+};
+
+#[no_mangle]
+#[used]
+static mut MclVFSWriter: MclVFS = MclVFS {
+    base: vfs_vtable!("mycelite_writer"),
+    read_only: false,
+    // initialized on extention load
+    real: ptr::null_mut()
 };
 
 impl MclVFS {
     /// Initialite MclVFS as a proxy to *real* VFS
-    unsafe fn init(real: *mut ffi::sqlite3_vfs) {
+    unsafe fn init(&mut self, real: *mut ffi::sqlite3_vfs) {
         // init VFS only once
-        if MclVFS.real.is_null() {
-            MclVFS.real = real;
-            MclVFS.base.szOsFile = mem::size_of::<MclVFSFile>() as c_int + (*real).szOsFile;
-            MclVFS.base.mxPathname = (*real).mxPathname;
+        if self.real.is_null() {
+            self.real = real;
+            self.base.szOsFile = mem::size_of::<MclVFSFile>() as c_int + (*real).szOsFile;
+            self.base.mxPathname = (*real).mxPathname;
         }
     }
 
     /// Get pointer to base vfs struct
-    unsafe fn as_base() -> *mut ffi::sqlite3_vfs {
-        &mut MclVFS.base
+    unsafe fn as_base(&mut self) -> *mut ffi::sqlite3_vfs {
+        &mut self.base
     }
 
     /// Get pointer to real vfs
     unsafe fn as_real_ptr(base: *mut ffi::sqlite3_vfs) -> *mut ffi::sqlite3_vfs {
-        MclVFS.real
+        (*base.cast::<Self>()).real
     }
 
     /// return reference to real vfs
@@ -79,6 +99,10 @@ impl MclVFS {
     /// reference allow vfs function calls
     unsafe fn as_real_ref(base: *mut ffi::sqlite3_vfs) -> &'static mut ffi::sqlite3_vfs {
         &mut *Self::as_real_ptr(base)
+    }
+
+    unsafe fn from_raw_ptr(base: *mut ffi::sqlite3_vfs) -> &'static mut Self {
+        &mut *(base.cast::<Self>())
     }
 }
 
@@ -103,6 +127,7 @@ impl MclVFSFile {
     /// init VFS File
     unsafe fn init(&mut self, vfs: *mut ffi::sqlite3_vfs) {
         self.vfs = vfs;
+        self.read_only = MclVFS::from_raw_ptr(vfs).read_only;
         self.mutex = mem::ManuallyDrop::new(Arc::new(Mutex::new(())));
         self.mutex_guard = None
     }
@@ -142,7 +167,6 @@ impl MclVFSFile {
         zname: *const c_char,
         lock: Arc<Mutex<()>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.read_only = std::env::var("MYCELIAL_WRITER").unwrap_or("false".into()) == "false";
         if flags & ffi::SQLITE_OPEN_MAIN_DB == 0 {
             self.journal = None;
             self.replicator = None;
@@ -452,15 +476,16 @@ pub unsafe fn sqlite3_mycelite_init(
 ) -> c_int {
     libsqlite_sys::init!(api);
 
-    MclVFS::init(
-        (*SQLITE3_API)
-            .vfs_find
-            .map(|f| f(ptr::null_mut()))
-            .unwrap(),
-    );
-    (*SQLITE3_API)
-        .vfs_register
-        .map(|f| f(MclVFS::as_base(), 1));
+    // sqlite default vfs
+    let default_vfs = (*SQLITE3_API).vfs_find.unwrap()(ptr::null_mut());
+
+    // init writer
+    MclVFSWriter.init(default_vfs);
+    (*SQLITE3_API).vfs_register.unwrap()(MclVFSWriter.as_base(), 0);
+
+    // init reader and set reader as a new default vfs
+    MclVFSReader.init(default_vfs);
+    (*SQLITE3_API).vfs_register.unwrap()(MclVFSReader.as_base(), 1);
 
     ffi::SQLITE_OK_LOAD_PERMANENTLY
 }
