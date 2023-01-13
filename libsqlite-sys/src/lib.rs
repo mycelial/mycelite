@@ -22,16 +22,19 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
     // |     padding     |       ptr        |  aligned mem block  |
     // ------------------------------------------------------------
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let header_size = match layout.align() {
+        let align = layout.align();
+        let header_size = match align {
             align if align <= PTR_USIZE => PTR_USIZE,
             align => align,
         };
         let size = header_size + layout.size();
         let block = (self.malloc)(size as u64) as *mut u8;
-        if block.is_null() {}
+        if block.is_null() {
+            return block
+        }
         let padding = match (block as usize) % layout.align() {
             0 => header_size,
-            v => v,
+            v => align - v,
         } as isize;
         *(block.offset(padding - PTR_ISIZE) as *mut usize) = block as usize;
         block.offset(padding)
