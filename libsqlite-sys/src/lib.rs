@@ -50,14 +50,14 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
 #[macro_export]
 macro_rules! setup {
     () => {
-        static mut SQLITE3_API: *mut ffi::sqlite3_api_routines = core::ptr::null_mut();
+        static mut SQLITE3_API: *mut libsqlite_sys::ffi::sqlite3_api_routines = core::ptr::null_mut();
 
         // stub
-        unsafe extern "C" fn _libsqlite3_stub_malloc(_: u64) -> *mut c_void {
+        unsafe extern "C" fn _libsqlite3_stub_malloc(_: u64) -> *mut core::ffi::c_void {
             panic!("libsqlite3 not initialized");
         }
 
-        unsafe extern "C" fn _libsqlite_stub_free(_: *mut c_void) {
+        unsafe extern "C" fn _libsqlite_stub_free(_: *mut core::ffi::c_void) {
             panic!("libsqlite3 not initialized");
         }
 
