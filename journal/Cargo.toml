@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 block = { path = "../block" }
-clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", default-features=false, features = ["std", "clock"] }
 serde_sqlite = { path = "../serde_sqlite" }

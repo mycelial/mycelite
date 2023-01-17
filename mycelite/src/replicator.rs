@@ -2,11 +2,12 @@
 //!
 //! ** For demo use only! **
 
-use journal::{Journal, PageHeader, Protocol, SnapshotHeader, Stream};
-use serde_sqlite::{de, se};
+use crate::config::{ConfigRegistry, Config};
+use journal::{Journal, Protocol, Stream};
+use serde_sqlite::de;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -20,42 +21,43 @@ enum Message {
 }
 
 pub struct Replicator {
-    url: String,
     database_path: String,
     journal: Journal,
     read_only: bool,
     lock: Arc<Mutex<()>>,
+    config: Arc<Mutex<Config>>,
 }
 
 impl Replicator {
     pub fn new<P: AsRef<Path>>(
-        url: String,
         journal_path: P,
         database_path: String,
         read_only: bool,
         lock: Arc<Mutex<()>>,
     ) -> Self {
+        let config = ConfigRegistry::new().get(&database_path.as_str());
         Self {
-            url,
             journal: Journal::try_from(journal_path).unwrap(),
             database_path,
             read_only,
             lock,
+            config
         }
     }
 
     pub fn spawn(mut self) -> ReplicatorHandle {
         let (local_loop_tx, mut local_loop_rx) = channel();
         let (remote_loop_tx, mut remote_loop_rx) = channel();
-        let (mut local_loop_clone, url_clone) = (local_loop_tx.clone(), self.url.clone());
+        let mut local_loop_clone = local_loop_tx.clone();
         let read_only = self.read_only;
+        let config = Arc::clone(&self.config);
         let local_loop_h = Some(std::thread::spawn(move || {
             self.enter_local_loop(&mut local_loop_rx)
         }));
         let remote_loop_h = match !read_only {
             true => None,
             false => Some(std::thread::spawn(move || {
-                Self::enter_remote_loop(&mut local_loop_clone, &mut remote_loop_rx, &url_clone)
+                Self::enter_remote_loop(&mut local_loop_clone, &mut remote_loop_rx, config)
             })),
         };
         ReplicatorHandle::new(local_loop_tx, remote_loop_tx, local_loop_h, remote_loop_h)
@@ -89,29 +91,45 @@ impl Replicator {
     /// remote loop
     ///
     /// just dumbly polls remote backend and bothers main thread. A lot.
-    fn enter_remote_loop(tx: &mut Sender<Message>, rx: &mut Receiver<Message>, url: &str) {
-        let url = &format!("{url}/api/v0/snapshots");
+    fn enter_remote_loop(
+        tx: &mut Sender<Message>,
+        rx: &mut Receiver<Message>,
+        config: Arc<Mutex<Config>>,
+    ) {
+        let config = &config;
         loop {
-            if let Ok(v) = Self::get_backend_current_snapshot(url) {
-                tx.send(Message::NewRemoteSnapshot).ok();
+            let url = Self::get_url(config);
+            let domain = Self::get_domain(config);
+            match (url.as_ref(), domain.as_ref()) {
+                (Some(url), Some(domain)) => {
+                    if let Ok(_) = Self::get_backend_current_snapshot(url, domain) {
+                        tx.send(Message::NewRemoteSnapshot).ok();
+                    };
+                },
+                _ => (),
             };
-            match rx.try_recv() {
-                Err(TryRecvError::Empty) => (),
+            match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+                Err(RecvTimeoutError::Timeout) => (),
                 _ => return,
             };
-            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
 
     /// Push local snapshots, if any
     fn maybe_push_snapshots(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // FIXME: unwrap
         self.journal.update_header().unwrap();
         let local_snapshot_id = match self.journal.current_snapshot() {
             None => return Ok(()),
             Some(v) => v,
         };
-        let url = &format!("{}/api/v0/snapshots", self.url);
-        let remote_snapshot_id = match Self::get_backend_current_snapshot(url) {
+        let url = Self::get_url(&self.config);
+        let domain = Self::get_domain(&self.config);
+        let (url, domain) = match (url.as_ref(), domain.as_ref()) {
+            (Some(u), Some(d)) => (u, d),
+            _ => return Ok(())
+        };
+        let remote_snapshot_id = match Self::get_backend_current_snapshot(url, domain) {
             Ok(Some(v)) if v >= local_snapshot_id => {
                 return Ok(());
             }
@@ -122,7 +140,7 @@ impl Replicator {
         // FIXME: status code are not checked
         let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
         ureq::post(url)
-            .set("x-mcl-to", "domain@mycelial.com")
+            .set("x-mcl-to", domain)
             .send(stream)?;
         Ok(())
     }
@@ -132,15 +150,20 @@ impl Replicator {
         &mut self,
     ) -> Result<(Option<u64>, Option<u64>), Box<dyn std::error::Error>> {
         let local_snapshot_id = self.journal.current_snapshot();
-        let url = &format!("{}/api/v0/snapshots", self.url);
-        match Self::get_backend_current_snapshot(url)? {
+        let url = Self::get_url(&self.config);
+        let domain = Self::get_domain(&self.config);
+        if url.is_none() || domain.is_none() {
+            return Ok((local_snapshot_id, local_snapshot_id))
+        };
+        let (url, domain) = (&url.unwrap(), &domain.unwrap());
+
+        match Self::get_backend_current_snapshot(url, domain)? {
             Some(v) if local_snapshot_id < Some(v) => (),
             v => return Ok((local_snapshot_id, v)),
         };
 
-        let url = &format!("{}/api/v0/snapshots", self.url);
         let res = ureq::get(url)
-            .set("x-mcl-to", "domain@mycelial.com")
+            .set("x-mcl-to", domain)
             .query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string())
             .call()?;
 
@@ -168,7 +191,7 @@ impl Replicator {
     // FIXME: move to journal API
     // FIXME: snapshot is recovered from scratch each time
     fn restore_latest_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let lock = self.lock.lock().map_err(|e| "failed to lock")?;
+        let lock = self.lock.lock().map_err(|_e| "failed to lock")?;
         let mut output = std::io::BufWriter::with_capacity(
             0x0010_0000,
             std::fs::OpenOptions::new()
@@ -177,17 +200,18 @@ impl Replicator {
                 .open(&self.database_path)?,
         );
         for data in self.journal.into_iter() {
-            let (snapshot_header, page_header, page) = data?;
+            let (_snapshot_header, page_header, page) = data?;
             output.seek(SeekFrom::Start(page_header.offset))?;
             output.write_all(&page)?;
         }
+        drop(lock);
         Ok(())
     }
 
     /// Fetch last snapshot id seen by sync backend
-    fn get_backend_current_snapshot(url: &str) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+    fn get_backend_current_snapshot(url: &str, domain: &str) -> Result<Option<u64>, Box<dyn std::error::Error>> {
         let res = ureq::head(url)
-            .set("x-mcl-to", "domain@mycelial.com")
+            .set("x-mcl-to", domain)
             .timeout(std::time::Duration::from_secs(5))
             .call()?;
 
@@ -196,6 +220,14 @@ impl Replicator {
             Some(value) => Ok(Some(value.parse()?)),
             None => Err("backend didn't return x-snapshot-id".into()),
         }
+    }
+
+    fn get_domain(config: &Arc<Mutex<Config>>) -> Option<String> {
+        config.lock().unwrap().get("domain").map(|s| s.to_owned())
+    }
+
+    fn get_url(config: &Arc<Mutex<Config>>) -> Option<String> {
+        config.lock().unwrap().get("endpoint").map(|s| format!("{s}/api/v0/snapshots"))
     }
 }
 
