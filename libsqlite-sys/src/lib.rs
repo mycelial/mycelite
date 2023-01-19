@@ -41,7 +41,10 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        let block = (*(ptr.offset(-PTR_ISIZE) as *mut usize)) as *mut c_void;
+        // address of tag
+        let addr = (ptr as usize - PTR_USIZE) as *mut usize;
+        // address of original block
+        let block = (*addr) as *mut c_void;
         (self.free)(block)
     }
 }

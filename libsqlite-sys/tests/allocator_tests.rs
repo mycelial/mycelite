@@ -22,7 +22,7 @@ struct TestAlloc {
 impl Arbitrary for TestAlloc {
     fn arbitrary(gen: &mut Gen) -> Self {
         let layouts = (0..10).map(|shf| 1 << shf).collect::<Vec<_>>();
-        let size = usize::arbitrary(gen) % 0x0000_8000;
+        let size = usize::arbitrary(gen) % 0x0008_0000;
         let layout = *layouts.get(usize::arbitrary(gen) % layouts.len()).unwrap();
         TestAlloc { size, layout }
     }
@@ -56,7 +56,8 @@ fn test_allocator() {
 
                 // find original block address by reading address of result - usize
                 let real_block_addr: usize = unsafe {
-                    *(result.offset(-(std::mem::size_of::<usize>() as isize)) as *mut usize)
+                    let addr = ((result as usize) - PTR_SIZE as usize) as *mut usize;
+                    *addr
                 };
                 // +----------------------------------------
                 // | real_addr | padding | header | result |
