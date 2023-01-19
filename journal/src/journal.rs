@@ -203,7 +203,10 @@ impl<F: Read + Write + Seek> Journal<F> {
                 page_count: self.page_count,
             });
         }
-        self.page_count.as_mut().map(|x| { *x += 1; *x });
+        self.page_count.as_mut().map(|x| {
+            *x += 1;
+            *x
+        });
         self.fd.write_all(&to_bytes(page_header)?)?;
         self.fd.write_all(page)?;
         Ok(())
