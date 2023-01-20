@@ -42,7 +42,7 @@ macro_rules! vfs_vtable {
             xGetSystemCall: None,
             xNextSystemCall: None,
         }
-    }
+    };
 }
 
 #[repr(C)]
@@ -60,7 +60,7 @@ static mut MclVFSReader: MclVFS = MclVFS {
     base: vfs_vtable!("mycelite_reader"),
     read_only: true,
     // initialized on extention load
-    real: ptr::null_mut()
+    real: ptr::null_mut(),
 };
 
 #[no_mangle]
@@ -69,7 +69,7 @@ static mut MclVFSWriter: MclVFS = MclVFS {
     base: vfs_vtable!("mycelite_writer"),
     read_only: false,
     // initialized on extention load
-    real: ptr::null_mut()
+    real: ptr::null_mut(),
 };
 
 impl MclVFS {
@@ -229,7 +229,10 @@ unsafe extern "C" fn mvfs_open(
     let real = MclVFS::as_real_ref(vfs);
     let file = MclVFSFile::from_ptr(file);
     file.init(vfs);
-    if file.setup_journal(flags, zname, Arc::clone(&file.mutex)).is_err() {
+    if file
+        .setup_journal(flags, zname, Arc::clone(&file.mutex))
+        .is_err()
+    {
         return ffi::SQLITE_ERROR;
     }
     file.base.pMethods = &MclVFSIO as *const _;

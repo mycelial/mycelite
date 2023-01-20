@@ -16,3 +16,8 @@ link = []
 [build-dependencies]
 bindgen = "0.63"
 pkg-config = "0.3"
+
+
+[dev-dependencies]
+quickcheck = "1"
+libc = "0.2"

@@ -30,7 +30,7 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
         let size = header_size + layout.size();
         let block = (self.malloc)(size as u64) as *mut u8;
         if block.is_null() {
-            return block
+            return block;
         }
         let padding = match (block as usize) % layout.align() {
             0 => header_size,
@@ -41,7 +41,10 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        let block = (*(ptr.offset(-PTR_ISIZE) as *mut usize)) as *mut c_void;
+        // address of tag
+        let addr = (ptr as usize - PTR_USIZE) as *mut usize;
+        // address of original block
+        let block = (*addr) as *mut c_void;
         (self.free)(block)
     }
 }
@@ -50,14 +53,15 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
 #[macro_export]
 macro_rules! setup {
     () => {
-        static mut SQLITE3_API: *mut ffi::sqlite3_api_routines = core::ptr::null_mut();
+        static mut SQLITE3_API: *mut libsqlite_sys::ffi::sqlite3_api_routines =
+            core::ptr::null_mut();
 
         // stub
-        unsafe extern "C" fn _libsqlite3_stub_malloc(_: u64) -> *mut c_void {
+        unsafe extern "C" fn _libsqlite3_stub_malloc(_: u64) -> *mut core::ffi::c_void {
             panic!("libsqlite3 not initialized");
         }
 
-        unsafe extern "C" fn _libsqlite_stub_free(_: *mut c_void) {
+        unsafe extern "C" fn _libsqlite_stub_free(_: *mut core::ffi::c_void) {
             panic!("libsqlite3 not initialized");
         }
 

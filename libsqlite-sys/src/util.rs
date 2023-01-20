@@ -36,6 +36,6 @@ impl<'a> Iterator for ArgvIter<'a> {
 #[macro_export]
 macro_rules! c_str(
     ($e:expr) => {
-        concat!($e, "\0").as_ptr() as *const c_char
+        concat!($e, "\0").as_ptr() as *const core::ffi::c_char
     }
 );
