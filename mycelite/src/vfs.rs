@@ -183,8 +183,7 @@ impl MclVFSFile {
         self.journal = Some(mem::ManuallyDrop::new(journal));
 
         self.replicator = Some(mem::ManuallyDrop::new(
-            replicator::Replicator::new(&journal_path, database_path, self.read_only, lock)
-                .spawn(),
+            replicator::Replicator::new(&journal_path, database_path, self.read_only, lock).spawn(),
         ));
 
         if bootstrapped {
@@ -373,7 +372,7 @@ unsafe extern "C" fn mvfs_io_write(
     let file = MclVFSFile::from_ptr(pfile);
     if file.read_only && file.journal.is_some() {
         // FIXME: this is a hack for reader-only and virtual table
-        if offset == 0 { 
+        if offset == 0 {
             return ffi::SQLITE_OK;
         } else {
             return ffi::SQLITE_READONLY;

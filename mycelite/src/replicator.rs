@@ -2,7 +2,7 @@
 //!
 //! ** For demo use only! **
 
-use crate::config::{ConfigRegistry, Config};
+use crate::config::{Config, ConfigRegistry};
 use journal::{Journal, Protocol, Stream};
 use serde_sqlite::de;
 use std::io::{Seek, SeekFrom, Write};
@@ -41,7 +41,7 @@ impl Replicator {
             database_path,
             read_only,
             lock,
-            config
+            config,
         }
     }
 
@@ -105,7 +105,7 @@ impl Replicator {
                     if let Ok(_) = Self::get_backend_current_snapshot(url, domain) {
                         tx.send(Message::NewRemoteSnapshot).ok();
                     };
-                },
+                }
                 _ => (),
             };
             match rx.recv_timeout(std::time::Duration::from_secs(1)) {
@@ -127,7 +127,7 @@ impl Replicator {
         let domain = Self::get_domain(&self.config);
         let (url, domain) = match (url.as_ref(), domain.as_ref()) {
             (Some(u), Some(d)) => (u, d),
-            _ => return Ok(())
+            _ => return Ok(()),
         };
         let remote_snapshot_id = match Self::get_backend_current_snapshot(url, domain) {
             Ok(Some(v)) if v >= local_snapshot_id => {
@@ -139,9 +139,7 @@ impl Replicator {
         };
         // FIXME: status code are not checked
         let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
-        ureq::post(url)
-            .set("x-mcl-to", domain)
-            .send(stream)?;
+        ureq::post(url).set("x-mcl-to", domain).send(stream)?;
         Ok(())
     }
 
@@ -153,7 +151,7 @@ impl Replicator {
         let url = Self::get_url(&self.config);
         let domain = Self::get_domain(&self.config);
         if url.is_none() || domain.is_none() {
-            return Ok((local_snapshot_id, local_snapshot_id))
+            return Ok((local_snapshot_id, local_snapshot_id));
         };
         let (url, domain) = (&url.unwrap(), &domain.unwrap());
 
@@ -209,7 +207,10 @@ impl Replicator {
     }
 
     /// Fetch last snapshot id seen by sync backend
-    fn get_backend_current_snapshot(url: &str, domain: &str) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+    fn get_backend_current_snapshot(
+        url: &str,
+        domain: &str,
+    ) -> Result<Option<u64>, Box<dyn std::error::Error>> {
         let res = ureq::head(url)
             .set("x-mcl-to", domain)
             .timeout(std::time::Duration::from_secs(5))
@@ -227,7 +228,11 @@ impl Replicator {
     }
 
     fn get_url(config: &Arc<Mutex<Config>>) -> Option<String> {
-        config.lock().unwrap().get("endpoint").map(|s| format!("{s}/api/v0/snapshots"))
+        config
+            .lock()
+            .unwrap()
+            .get("endpoint")
+            .map(|s| format!("{s}/api/v0/snapshots"))
     }
 }
 
