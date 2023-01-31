@@ -49,7 +49,7 @@ unsafe impl GlobalAlloc for SQLiteAllocator {
     }
 }
 
-/// Setup SQLITE3_API3 and GLOBAL_ALLOC symbols
+/// Setup SQLITE3_API3 and SQLITE_ALLOCATOR symbols
 #[macro_export]
 macro_rules! setup {
     () => {
@@ -66,10 +66,19 @@ macro_rules! setup {
         }
 
         #[global_allocator]
-        static mut GLOBAL_ALLOC: libsqlite_sys::SQLiteAllocator = libsqlite_sys::SQLiteAllocator {
-            malloc: _libsqlite3_stub_malloc,
-            free: _libsqlite_stub_free,
-        };
+        static mut SQLITE_ALLOCATOR: libsqlite_sys::SQLiteAllocator =
+            libsqlite_sys::SQLiteAllocator {
+                malloc: _libsqlite3_stub_malloc,
+                free: _libsqlite_stub_free,
+            };
+
+        use core::alloc::GlobalAlloc;
+        pub unsafe extern "C" fn deallocate(ptr: *mut core::ffi::c_void) {
+            SQLITE_ALLOCATOR.dealloc(
+                ptr as *mut u8,
+                core::alloc::Layout::from_size_align_unchecked(0, 0),
+            )
+        }
     };
 }
 
@@ -79,7 +88,7 @@ macro_rules! init {
     ($global:expr) => {
         SQLITE3_API = $global;
 
-        GLOBAL_ALLOC.malloc = (*$global).malloc64.unwrap();
-        GLOBAL_ALLOC.free = (*$global).free.unwrap();
+        SQLITE_ALLOCATOR.malloc = (*$global).malloc64.unwrap();
+        SQLITE_ALLOCATOR.free = (*$global).free.unwrap();
     };
 }

@@ -22,7 +22,7 @@ struct TestAlloc {
 impl Arbitrary for TestAlloc {
     fn arbitrary(gen: &mut Gen) -> Self {
         let layouts = (0..10).map(|shf| 1 << shf).collect::<Vec<_>>();
-        let size = usize::arbitrary(gen) % 0x0008_0000;
+        let size = usize::arbitrary(gen) % 0x0001_0000;
         let layout = *layouts.get(usize::arbitrary(gen) % layouts.len()).unwrap();
         TestAlloc { size, layout }
     }

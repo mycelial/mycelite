@@ -14,6 +14,10 @@ libsqlite-sys = { path = "../libsqlite-sys" }
 journal = { path = "../journal" }
 page_parser = { path = "../page_parser" }
 serde_sqlite = { path = "../serde_sqlite" }
+lazy_static = "1"
 
 # replicator
 ureq = { version = "2.5" }
+
+# config
+toml = "0.7"
