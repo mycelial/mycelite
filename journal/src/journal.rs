@@ -261,7 +261,7 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * seek to start of the file
     /// * read header
     fn read_header<R: Read + Seek>(fd: &mut R) -> Result<Header> {
-        fd.seek(SeekFrom::Start(0))?;
+        fd.rewind()?;
         from_reader(BufReader::new(fd)).map_err(Into::into)
     }
 
@@ -270,7 +270,7 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * seek to start of the file
     /// * write header
     fn write_header<W: Write + Seek>(fd: &mut W, header: &Header) -> Result<()> {
-        fd.seek(SeekFrom::Start(0))?;
+        fd.rewind()?;
         fd.write_all(&to_bytes(header)?).map_err(Into::into)
     }
 

@@ -1,20 +1,15 @@
 //! mycelite configuration
 use crate::{deallocate, SQLITE3_API};
-use lazy_static::lazy_static;
-use libsqlite_sys::{
-    c_str, ffi,
-    sqlite_value::{SqliteValue, SqliteValueIter},
-    vtab::UpdateType,
-};
-use once_cell::OnceCell;
+use libsqlite_sys::{c_str, ffi, sqlite_value::SqliteValue, vtab::UpdateType};
+use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::marker::PhantomData;
 use std::mem;
 use std::sync::{Arc, Mutex};
-use toml;
 
-static CONFIG_REGISTRY: OnceCell<Mutex<BTreeMap<String, Arc<Mutex<Config>>>>> = OnceCell::new();
+
+static CONFIG_REGISTRY: Lazy<Mutex<BTreeMap<String, Arc<Mutex<Config>>>>> =
+    Lazy::new(|| Mutex::new(BTreeMap::new()));
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct ConfigRegistry {}
@@ -35,6 +30,7 @@ impl ConfigRegistry {
         map.insert(database_path.into(), Arc::new(Mutex::new(config)));
     }
 
+    #[allow(dead_code)]
     pub fn unregister_config(self, database_path: &str) {
         CONFIG_REGISTRY
             .lock()
@@ -65,13 +61,9 @@ impl Config {
             path
         };
         Self {
-            path: path.into(),
+            path,
             state: BTreeMap::new(),
         }
-    }
-
-    pub fn from_path(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self::new(path))
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -213,7 +205,7 @@ unsafe extern "C" fn x_connect(
 
 unsafe extern "C" fn x_best_index(
     _p_vtab: *mut ffi::sqlite3_vtab,
-    index_info: *mut ffi::sqlite3_index_info,
+    _index_info: *mut ffi::sqlite3_index_info,
 ) -> c_int {
     ffi::SQLITE_OK
 }
@@ -346,11 +338,7 @@ unsafe extern "C" fn x_rollback(_p_vtab: *mut ffi::sqlite3_vtab) -> c_int {
     ffi::SQLITE_OK
 }
 
-pub unsafe fn init(
-    db: *mut ffi::sqlite3,
-    _err: *mut *mut c_char,
-    api: *mut ffi::sqlite3_api_routines,
-) -> c_int {
+pub unsafe fn init(db: *mut ffi::sqlite3, _err: *mut *mut c_char) -> c_int {
     static CONFIG_VTABLE: ffi::sqlite3_module = ffi::sqlite3_module {
         iVersion: 0,
         xCreate: None,

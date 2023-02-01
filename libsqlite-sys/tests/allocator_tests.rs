@@ -1,5 +1,5 @@
-use libc;
-use libsqlite_sys;
+
+
 use quickcheck::{Arbitrary, Gen, TestResult};
 use std::alloc;
 

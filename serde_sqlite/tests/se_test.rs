@@ -42,7 +42,7 @@ fn test_valid_serialization() {
     };
     // to_bytes
     let res = to_bytes(&header);
-    assert!(res.is_ok(), "{:?}", res);
+    assert!(res.is_ok(), "{res:?}");
 
     let header = res.unwrap();
     assert_eq!(header.len(), ValidStruct::block_size());
@@ -89,7 +89,7 @@ fn test_valid_serialization_to_writer() {
     
     let mut buf = vec![0xff; 72];
     let res = to_writer(buf.as_mut_slice(), &header);
-    assert!(res.is_ok(), "{:?}", res);
+    assert!(res.is_ok(), "{res:?}");
 
     assert_eq!(
         buf.as_slice(),

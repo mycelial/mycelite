@@ -430,8 +430,8 @@ name = "mycelite"
 version = "0.1.0"
 dependencies = [
  "journal",
- "lazy_static",
  "libsqlite-sys",
+ "once_cell",
  "page_parser",
  "serde_sqlite",
  "toml",

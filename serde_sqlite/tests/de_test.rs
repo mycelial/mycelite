@@ -171,7 +171,7 @@ fn test_deserialization_newtype_enum() {
         /* padding */ 0x01, 0x02, 0x03, 0x04, 0x05
     ];
     let res = from_bytes::<A>(block);
-    assert!(res.is_ok(), "{:?}", res);
+    assert!(res.is_ok(), "{res:?}");
     let f = res.unwrap();
     assert_eq!(
         A::F(ValidStruct{
@@ -198,7 +198,7 @@ fn test_deserialization_newtype_enum() {
         /* padding */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
     let res = from_bytes::<A>(block);
-    assert!(res.is_ok(), "{:?}", res);
+    assert!(res.is_ok(), "{res:?}");
     let s = res.unwrap();
     assert_eq!(A::S(S{}), s);
 
@@ -210,7 +210,7 @@ fn test_deserialization_newtype_enum() {
     ];
 
     let res = from_bytes::<B>(block);
-    assert!(res.is_ok(), "{:?}", res);
+    assert!(res.is_ok(), "{res:?}");
     let b = res.unwrap();
     assert_eq!(B::A(A::S(S{})), b);
 }

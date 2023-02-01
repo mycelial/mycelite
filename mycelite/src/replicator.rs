@@ -35,7 +35,7 @@ impl Replicator {
         read_only: bool,
         lock: Arc<Mutex<()>>,
     ) -> Self {
-        let config = ConfigRegistry::new().get(&database_path.as_str());
+        let config = ConfigRegistry::new().get(database_path.as_str());
         Self {
             journal: Journal::try_from(journal_path).unwrap(),
             database_path,
@@ -102,7 +102,7 @@ impl Replicator {
             let domain = Self::get_domain(config);
             match (url.as_ref(), domain.as_ref()) {
                 (Some(url), Some(domain)) => {
-                    if let Ok(_) = Self::get_backend_current_snapshot(url, domain) {
+                    if Self::get_backend_current_snapshot(url, domain).is_ok() {
                         tx.send(Message::NewRemoteSnapshot).ok();
                     };
                 }

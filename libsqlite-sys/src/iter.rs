@@ -21,7 +21,7 @@ where
         if self.offset >= self.len {
             return None;
         }
-        let item = unsafe { *self.ptr.offset(self.offset as isize) };
+        let item = unsafe { *self.ptr.add(self.offset) };
         self.offset += 1;
         Some(item)
     }

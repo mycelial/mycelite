@@ -3,7 +3,7 @@
 //! serialized version should produce exact header is was deserialized from.
 
 use page_parser::Header;
-use serde_sqlite;
+
 use std::ffi::CStr;
 
 // real sqlite3 header
@@ -150,11 +150,11 @@ impl TestHeader {
 #[test]
 fn header_deserialize_serialize() {
     let header = serde_sqlite::from_bytes::<Header>(HEADER.as_slice());
-    assert!(header.is_ok(), "{:?}", header);
+    assert!(header.is_ok(), "{header:?}");
     let header = header.unwrap();
 
     let test_header = <TestHeader as TryFrom<_>>::try_from(&HEADER);
-    assert!(test_header.is_ok(), "{:?}", test_header);
+    assert!(test_header.is_ok(), "{test_header:?}");
     let test_header = test_header.unwrap();
 
     // check magic
@@ -222,7 +222,7 @@ fn header_deserialize_serialize() {
     assert_eq!(header.largest_root, test_header.largest_root);
 
     // check text encoding
-    assert_eq!(header.text_encoding, test_header.text_encoding as u32);
+    assert_eq!(header.text_encoding, { test_header.text_encoding });
 
     // check user version
     assert_eq!(header.user_version, test_header.user_version);
@@ -244,7 +244,7 @@ fn header_deserialize_serialize() {
 
     // check serialized header equals original header
     let bytes = serde_sqlite::to_bytes(&header);
-    assert!(bytes.is_ok(), "{:?}", bytes);
+    assert!(bytes.is_ok(), "{bytes:?}");
     let bytes = bytes.unwrap();
     assert_eq!(bytes, HEADER);
 }
