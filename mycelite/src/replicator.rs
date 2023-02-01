@@ -44,8 +44,8 @@ impl Replicator {
     }
 
     pub fn spawn(mut self) -> ReplicatorHandle {
-        let (tx, mut loop_rx) = channel();
-        let local_h = Some(std::thread::spawn(move || self.enter_loop(&mut loop_rx)));
+        let (tx, mut rx) = channel();
+        let local_h = Some(std::thread::spawn(move || self.enter_loop(&mut rx)));
         ReplicatorHandle::new(tx, local_h)
     }
 
