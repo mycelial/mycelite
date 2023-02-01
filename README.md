@@ -113,6 +113,38 @@ following commands:
 .open reader.db
 ```
 
+#### Configuration
+Both reader and writer require initial configuration.  
+To do that you will need to load mycelite_config vtable:  
+```
+.load ./target/release/libmycelite mycelite_config
+```
+
+Configuration example for local run:  
+```
+insert into mycelite_config values
+    ('endpoint', 'http://localhost:8080'),
+    ('domain', 'domain'),
+    ('client_id', 'client_id'),
+    ('secret', 'secret');
+```
+Validate config:  
+```
+select * from mycelite_config;
++-----------+-----------------------+
+|    key    |         value         |
++-----------+-----------------------+
+| client_id | client_id             |
+| domain    | domain                |
+| endpoint  | http://localhost:8080 |
+| secret    | secret                |
++-----------+-----------------------+
+```
+
+Configuration is persistent and written into <database-filename>-mycelite-config file.  
+
+
+
 #### Observing Synchronization
 
 In the writer instance, create a table and then populate the table. For example:
