@@ -141,7 +141,7 @@ select * from mycelite_config;
 +-----------+-----------------------+
 ```
 
-Configuration is persistent and written into <database-filename>-mycelite-config file.  
+Configuration is persistent and written into \<database-filename\>-mycelite-config file.  
 
 
 
