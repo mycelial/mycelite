@@ -1,4 +1,5 @@
 ![tests](https://github.com/mycelial/mycelite/actions/workflows/tests.yml/badge.svg)
+
 # Mycelite
 
 ## What is Mycelite?
@@ -49,12 +50,14 @@ change that.
 ### Prerequisites
 
 [Install Rust](https://www.rust-lang.org/tools/install).
-The version of Rust must be >= 1.65.
+You must be using Rust v1.65 or newer.
 
 Install a recent version of SQLite. The default version of SQLite that comes
 preinstalled may not support extensions. For Mac users, [Brew](https://formulae.brew.sh/formula/sqlite)
 will install an appropriate build of SQLite.
 _Note: you may need to modify your **$PATH**. Pay close attention to Brew's PATH instructions._
+
+<!-- TODO: Do we want to have an instruction for devenv at this point? -->
 
 ### Building Mycelite
 
@@ -81,7 +84,11 @@ cargo run -p sync-backend
 
 #### SQLite Writer
 
+<!-- TODO: are we switching to `owner` terminology? if so, we should consider introducing now -->
+
 In a new terminal, start a SQLite writer instance with the following command:
+
+<!-- TODO: should this be Mycelite or Mycelial Writer / Mycelial Reader? -->
 
 ```
 cd mycelite
@@ -112,6 +119,44 @@ following commands:
 .load ./target/release/libmycelite
 .open reader.db
 ```
+
+#### Configuration
+
+Both the Mycelial Reader and Mycelial Writer require some initial configuration. Mycelial configuration is stored in a virtual table (vtable) called `mycelite_config`.
+
+To configure your Mycelite, first load the vtable _in your SQLite shell_:
+
+```
+.load ./target/release/libmycelite mycelite_config
+```
+
+Next, insert values for the `endpoint` (replicator endpoint), the `domain` (see [Mycelial Domains]()) where the database lives), a `client_id`, and a `secret`.
+
+<!-- TODO: page for domains, info for generating a client_id and secret?? -->
+
+```
+insert into mycelite_config values
+    ('endpoint', 'http://localhost:8080'),
+    ('domain', 'domain'),
+    ('client_id', 'client_id'),
+    ('secret', 'secret');
+```
+
+Validate config:
+
+```
+select * from mycelite_config;
++-----------+-----------------------+
+|    key    |         value         |
++-----------+-----------------------+
+| client_id | client_id             |
+| domain    | domain                |
+| endpoint  | http://localhost:8080 |
+| secret    | secret                |
++-----------+-----------------------+
+```
+
+Configuration is persistent and written to a file at `\<database-filename\>-mycelite-config.
 
 #### Observing Synchronization
 

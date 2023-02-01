@@ -10,8 +10,8 @@ libsqlite_sys::setup!();
 
 #[no_mangle]
 pub unsafe fn sqlite3_mycelite_init(
-    db: *mut ffi::sqlite3,
-    err: *mut *mut c_char,
+    _db: *mut ffi::sqlite3,
+    _err: *mut *mut c_char,
     api: *mut ffi::sqlite3_api_routines,
 ) -> c_int {
     libsqlite_sys::init!(api);
@@ -41,5 +41,5 @@ pub unsafe fn mycelite_config(
     libsqlite_sys::init!(api);
 
     // init configuration vtab for given db handle
-    config::init(db, err, SQLITE3_API)
+    config::init(db, err)
 }

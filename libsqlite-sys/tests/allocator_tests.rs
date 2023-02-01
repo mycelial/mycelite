@@ -1,13 +1,12 @@
-use libc;
-use libsqlite_sys;
 use quickcheck::{Arbitrary, Gen, TestResult};
 use std::alloc;
 
 #[global_allocator]
-static mut SQLITE3_ALLOCATOR: libsqlite_sys::SQLiteAllocator = libsqlite_sys::SQLiteAllocator {
-    malloc: _test_malloc64_wrap,
-    free: libc::free,
-};
+static mut SQLITE3_ALLOCATOR: libsqlite_sys::alloc::SQLiteAllocator =
+    libsqlite_sys::alloc::SQLiteAllocator {
+        malloc: _test_malloc64_wrap,
+        free: libc::free,
+    };
 
 unsafe extern "C" fn _test_malloc64_wrap(size: u64) -> *mut core::ffi::c_void {
     libc::malloc(size as libc::size_t)

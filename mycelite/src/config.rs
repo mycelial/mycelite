@@ -1,18 +1,14 @@
 //! mycelite configuration
-use crate::deallocate;
-use lazy_static::lazy_static;
-use libsqlite_sys::{c_str, ffi};
+use crate::{deallocate, SQLITE3_API};
+use libsqlite_sys::{c_str, ffi, sqlite_value::SqliteValue, vtab::UpdateType};
+use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::marker::PhantomData;
 use std::mem;
 use std::sync::{Arc, Mutex};
-use toml;
 
-lazy_static! {
-    pub(crate) static ref CONFIG_REGISTRY: Mutex<BTreeMap<String, Arc<Mutex<Config>>>> =
-        Mutex::new(BTreeMap::new());
-}
+static CONFIG_REGISTRY: Lazy<Mutex<BTreeMap<String, Arc<Mutex<Config>>>>> =
+    Lazy::new(|| Mutex::new(BTreeMap::new()));
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct ConfigRegistry {}
@@ -33,6 +29,7 @@ impl ConfigRegistry {
         map.insert(database_path.into(), Arc::new(Mutex::new(config)));
     }
 
+    #[allow(dead_code)]
     pub fn unregister_config(self, database_path: &str) {
         CONFIG_REGISTRY
             .lock()
@@ -46,141 +43,6 @@ impl ConfigRegistry {
             .lock()
             .map(|map| Arc::clone(map.get(database_path).unwrap()))
             .unwrap()
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ValueIter<'a> {
-    cur: usize,
-    total: usize,
-    value: *mut *mut ffi::sqlite3_value,
-    _marker: PhantomData<&'a ()>,
-}
-
-impl<'a> ValueIter<'a> {
-    fn new(argc: c_int, value: *mut *mut ffi::sqlite3_value) -> Self {
-        Self {
-            cur: 0,
-            total: argc as usize,
-            value,
-            _marker: PhantomData,
-        }
-    }
-}
-
-// FIXME: move to utils
-#[derive(Debug, PartialEq)]
-pub enum SqliteValue<'a> {
-    I64(i64),
-    Double(f64),
-    Blob(&'a [u8]),
-    Text(&'a str),
-    Null,
-}
-
-impl<'a> SqliteValue<'a> {
-    fn is_null(&self) -> bool {
-        match self {
-            Self::Null => true,
-            _ => false,
-        }
-    }
-}
-
-// FIXME: move to utils
-impl<'a> Iterator for ValueIter<'a> {
-    type Item = SqliteValue<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cur >= self.total {
-            return None;
-        }
-        let value = unsafe {
-            let value = *self.value.offset(self.cur as isize);
-            match { (*SQLITE3_API).value_type.unwrap()(value) } {
-                ffi::SQLITE_TEXT => {
-                    let (text, len) = (
-                        (*SQLITE3_API).value_text.unwrap()(value),
-                        (*SQLITE3_API).value_bytes.unwrap()(value) as usize,
-                    );
-                    SqliteValue::Text(std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                        text, len,
-                    )))
-                }
-                ffi::SQLITE_INTEGER => SqliteValue::I64((*SQLITE3_API).value_int64.unwrap()(value)),
-                ffi::SQLITE_FLOAT => {
-                    SqliteValue::Double((*SQLITE3_API).value_double.unwrap()(value))
-                }
-                ffi::SQLITE_NULL => SqliteValue::Null,
-                ffi::SQLITE_BLOB => {
-                    let blob = std::slice::from_raw_parts(
-                        (*SQLITE3_API).value_blob.unwrap()(value) as *const u8,
-                        (*SQLITE3_API).value_bytes.unwrap()(value) as usize,
-                    );
-                    SqliteValue::Blob(blob)
-                }
-                _ => unreachable!(),
-            }
-        };
-        self.cur += 1;
-        Some(value)
-    }
-}
-
-// FIXME: move to utils
-#[derive(Debug, PartialEq)]
-enum UpdateType<'a> {
-    Delete {
-        row_id: SqliteValue<'a>,
-    },
-    Insert {
-        row_id: SqliteValue<'a>,
-        columns: Vec<SqliteValue<'a>>,
-    },
-    Update {
-        row_id: SqliteValue<'a>,
-        columns: Vec<SqliteValue<'a>>,
-    },
-}
-
-// FIXME: move to utils
-// https://www.sqlite.org/vtab.html#xupdate
-impl<'a> From<(c_int, *mut *mut ffi::sqlite3_value)> for UpdateType<'a> {
-    fn from((argc, argv): (c_int, *mut *mut ffi::sqlite3_value)) -> Self {
-        let mut iter = ValueIter::new(argc, argv);
-        let first = iter.next();
-        let second = iter.next();
-        let columns: Vec<SqliteValue<'a>> = iter.collect();
-        match argc {
-            1 if first.is_some() => Self::Delete {
-                row_id: first.unwrap(),
-            },
-            v if v > 1 && first.is_some() && first.as_ref().unwrap().is_null() => Self::Insert {
-                row_id: first.unwrap(),
-                columns,
-            },
-            v if v > 1
-                && first.is_some()
-                && !first.as_ref().unwrap().is_null()
-                && first == second =>
-            {
-                Self::Insert {
-                    row_id: first.unwrap(),
-                    columns,
-                }
-            }
-            v if v > 1
-                && first.is_some()
-                && !first.as_ref().unwrap().is_null()
-                && first != second =>
-            {
-                Self::Update {
-                    row_id: first.unwrap(),
-                    columns,
-                }
-            }
-            _ => unreachable!(),
-        }
     }
 }
 
@@ -198,13 +60,9 @@ impl Config {
             path
         };
         Self {
-            path: path.into(),
+            path,
             state: BTreeMap::new(),
         }
-    }
-
-    pub fn from_path(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self::new(path))
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -346,7 +204,7 @@ unsafe extern "C" fn x_connect(
 
 unsafe extern "C" fn x_best_index(
     _p_vtab: *mut ffi::sqlite3_vtab,
-    index_info: *mut ffi::sqlite3_index_info,
+    _index_info: *mut ffi::sqlite3_index_info,
 ) -> c_int {
     ffi::SQLITE_OK
 }
@@ -432,11 +290,11 @@ unsafe extern "C" fn x_update(
     let vtab = VTab::as_mut(vtab);
     let config = ConfigRegistry::new().get(vtab.database_path.as_str());
     let mut config = config.lock().unwrap();
-    match UpdateType::from((argc, value)) {
+    match UpdateType::from((argc, value, SQLITE3_API)) {
         UpdateType::Delete {
             row_id: SqliteValue::I64(row_id),
         } => config.delete(row_id as usize),
-        UpdateType::Update { columns, .. } => match (columns.get(0), columns.get(1)) {
+        UpdateType::Update { mut columns, .. } => match (columns.next(), columns.next()) {
             (Some(SqliteValue::Text(key)), Some(SqliteValue::Text(value))) => {
                 config.insert(key, value)
             }
@@ -444,7 +302,7 @@ unsafe extern "C" fn x_update(
                 return ffi::SQLITE_MISUSE;
             }
         },
-        UpdateType::Insert { columns, .. } => match (columns.get(0), columns.get(1)) {
+        UpdateType::Insert { mut columns, .. } => match (columns.next(), columns.next()) {
             (Some(SqliteValue::Text(key)), Some(SqliteValue::Text(value))) => {
                 config.insert(key, value)
             }
@@ -479,15 +337,7 @@ unsafe extern "C" fn x_rollback(_p_vtab: *mut ffi::sqlite3_vtab) -> c_int {
     ffi::SQLITE_OK
 }
 
-static mut SQLITE3_API: *mut ffi::sqlite3_api_routines = std::ptr::null_mut();
-
-pub unsafe fn init(
-    db: *mut ffi::sqlite3,
-    _err: *mut *mut c_char,
-    api: *mut ffi::sqlite3_api_routines,
-) -> c_int {
-    SQLITE3_API = api;
-
+pub unsafe fn init(db: *mut ffi::sqlite3, _err: *mut *mut c_char) -> c_int {
     static CONFIG_VTABLE: ffi::sqlite3_module = ffi::sqlite3_module {
         iVersion: 0,
         xCreate: None,

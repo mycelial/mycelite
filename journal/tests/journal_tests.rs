@@ -2,7 +2,6 @@ use block::Block;
 use journal::{Header, Journal, Protocol, Stream};
 use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 use std::io::{Cursor, Read, Write};
-use tempfile;
 
 #[test]
 fn test_journal_not_exists() {
@@ -62,7 +61,7 @@ impl Arbitrary for TestSnapshot {
         Box::new(
             self.pages
                 .shrink()
-                .filter(|pages| pages.len() > 0) // snapshot with no pages is not valid input
+                .filter(|pages| !pages.is_empty()) // snapshot with no pages is not valid input
                 .map(|pages| TestSnapshot { pages }),
         )
     }
@@ -179,7 +178,7 @@ fn test_journal_stream() {
                     });
                 }
                 Ok(Protocol::EndOfStream(_)) => break,
-                Err(e) => return TestResult::error(format!("unexpected error: {}", e)),
+                Err(e) => return TestResult::error(format!("unexpected error: {e}")),
             }
         }
         TestResult::from_bool(input.eq(&expected))
@@ -244,7 +243,7 @@ fn test_journal_stream_with_offset() {
                     });
                 }
                 Ok(Protocol::EndOfStream(_)) => break,
-                Err(e) => return TestResult::error(format!("unexpected error: {}", e)),
+                Err(e) => return TestResult::error(format!("unexpected error: {e}")),
             }
         }
         TestResult::from_bool(input[skip as usize..].eq(&expected))
@@ -297,7 +296,7 @@ fn test_journal_rebuild_from_stream() {
                     recovered_journal.commit().unwrap();
                     break;
                 }
-                Err(e) => panic!("unexpected stream error: {}", e),
+                Err(e) => panic!("unexpected stream error: {e}"),
             }
         }
         assert_eq!(

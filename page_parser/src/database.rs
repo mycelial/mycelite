@@ -3,7 +3,7 @@ use crate::header::Header;
 use crate::page::RawPage;
 use serde_sqlite::from_bytes;
 use std::io::BufReader;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -32,7 +32,7 @@ impl Database {
                 (page_size, db_size / page_size)
             }
         };
-        fd.seek(SeekFrom::Start(0))?;
+        fd.rewind()?;
         Ok(RawPageIter {
             fd: BufReader::new(fd),
             page_size,
