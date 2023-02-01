@@ -4,7 +4,7 @@ use quickcheck::{Arbitrary, Gen, TestResult};
 use std::alloc;
 
 #[global_allocator]
-static mut SQLITE3_ALLOCATOR: libsqlite_sys::SQLiteAllocator = libsqlite_sys::SQLiteAllocator {
+static mut SQLITE3_ALLOCATOR: libsqlite_sys::alloc::SQLiteAllocator = libsqlite_sys::alloc::SQLiteAllocator {
     malloc: _test_malloc64_wrap,
     free: libc::free,
 };
