@@ -3,7 +3,6 @@ use journal::{Header, Journal, Protocol, Stream};
 use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 use std::io::{Cursor, Read, Write};
 
-
 #[test]
 fn test_journal_not_exists() {
     // create named temp file and delete

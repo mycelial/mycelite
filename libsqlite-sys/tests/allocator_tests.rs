@@ -1,5 +1,3 @@
-
-
 use quickcheck::{Arbitrary, Gen, TestResult};
 use std::alloc;
 
