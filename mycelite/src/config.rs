@@ -7,7 +7,6 @@ use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-
 static CONFIG_REGISTRY: Lazy<Mutex<BTreeMap<String, Arc<Mutex<Config>>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 

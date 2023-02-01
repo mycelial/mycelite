@@ -14,8 +14,6 @@ use std::thread::JoinHandle;
 enum Message {
     /// New snapshot added locally
     NewLocalSnapshot,
-    /// New snapshot added remotely
-    NewRemoteSnapshot,
     /// Notification from ReplicatorHandle about closed DB File
     Quit,
 }
@@ -46,71 +44,36 @@ impl Replicator {
     }
 
     pub fn spawn(mut self) -> ReplicatorHandle {
-        let (local_loop_tx, mut local_loop_rx) = channel();
-        let (remote_loop_tx, mut remote_loop_rx) = channel();
-        let mut local_loop_clone = local_loop_tx.clone();
-        let read_only = self.read_only;
-        let config = Arc::clone(&self.config);
-        let local_loop_h = Some(std::thread::spawn(move || {
-            self.enter_local_loop(&mut local_loop_rx)
-        }));
-        let remote_loop_h = match !read_only {
-            true => None,
-            false => Some(std::thread::spawn(move || {
-                Self::enter_remote_loop(&mut local_loop_clone, &mut remote_loop_rx, config)
-            })),
-        };
-        ReplicatorHandle::new(local_loop_tx, remote_loop_tx, local_loop_h, remote_loop_h)
+        let (tx, mut loop_rx) = channel();
+        let local_h = Some(std::thread::spawn(move || self.enter_loop(&mut loop_rx)));
+        ReplicatorHandle::new(tx, local_h)
     }
 
     /// local loop
     ///
     /// listens for notifications pulls/pushes snapshots, restores underlying database to latest
     /// snapshot
-    fn enter_local_loop(&mut self, rx: &mut Receiver<Message>) {
+    fn enter_loop(&mut self, rx: &mut Receiver<Message>) {
         loop {
-            if !self.read_only {
-                self.maybe_push_snapshots().ok();
+            match self.read_only {
+                true => {
+                    match self.maybe_pull_snapshots() {
+                        Ok((last, new)) if last < new => {
+                            self.restore_latest_snapshot().ok();
+                        }
+                        Ok(_) => (),
+                        Err(_e) => (),
+                    };
+                }
+                false => {
+                    self.maybe_push_snapshots().ok();
+                }
             }
-            match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            match rx.recv_timeout(std::time::Duration::from_secs(1)) {
                 Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => (),
                 Ok(Message::Quit) => return,
                 Ok(Message::NewLocalSnapshot) => (),
-                Ok(Message::NewRemoteSnapshot) => match self.maybe_pull_snapshots() {
-                    Ok((last, new)) if last < new => {
-                        self.restore_latest_snapshot().ok();
-                    }
-                    Ok(_) => (),
-                    Err(_e) => (),
-                },
-            };
-        }
-    }
-
-    /// remote loop
-    ///
-    /// just dumbly polls remote backend and bothers main thread. A lot.
-    fn enter_remote_loop(
-        tx: &mut Sender<Message>,
-        rx: &mut Receiver<Message>,
-        config: Arc<Mutex<Config>>,
-    ) {
-        let config = &config;
-        loop {
-            let url = Self::get_url(config);
-            let domain = Self::get_domain(config);
-            match (url.as_ref(), domain.as_ref()) {
-                (Some(url), Some(domain)) => {
-                    if Self::get_backend_current_snapshot(url, domain).is_ok() {
-                        tx.send(Message::NewRemoteSnapshot).ok();
-                    };
-                }
-                _ => (),
-            };
-            match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-                Err(RecvTimeoutError::Timeout) => (),
-                _ => return,
             };
         }
     }
@@ -238,37 +201,23 @@ impl Replicator {
 
 #[derive(Debug)]
 pub struct ReplicatorHandle {
-    local_loop_tx: Sender<Message>,
-    remote_loop_tx: Sender<Message>,
-    local_loop: Option<JoinHandle<()>>,
-    remote_loop: Option<JoinHandle<()>>,
+    tx: Sender<Message>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl Drop for ReplicatorHandle {
     fn drop(&mut self) {
-        self.local_loop_tx.send(Message::Quit).ok();
-        self.remote_loop_tx.send(Message::Quit).ok();
-        self.local_loop.take().map(|h| h.join());
-        self.remote_loop.take().map(|h| h.join());
+        self.tx.send(Message::Quit).ok();
+        self.handle.take().map(|h| h.join());
     }
 }
 
 impl ReplicatorHandle {
-    fn new(
-        local_loop_tx: Sender<Message>,
-        remote_loop_tx: Sender<Message>,
-        local_loop: Option<JoinHandle<()>>,
-        remote_loop: Option<JoinHandle<()>>,
-    ) -> Self {
-        Self {
-            local_loop_tx,
-            remote_loop_tx,
-            local_loop,
-            remote_loop,
-        }
+    fn new(tx: Sender<Message>, handle: Option<JoinHandle<()>>) -> Self {
+        Self { tx, handle }
     }
 
     pub fn new_snapshot(&mut self) {
-        self.local_loop_tx.send(Message::NewLocalSnapshot).ok();
+        self.tx.send(Message::NewLocalSnapshot).ok();
     }
 }
