@@ -19,11 +19,6 @@ fn main() {
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=build.rs");
 
-    #[cfg(feature = "link")]
-    {
-        println!("cargo:rustc-link-lib=dylib=sqlite3");
-    }
-
     let pkg_conf = pkg_config::Config::new()
         .print_system_cflags(false)
         .print_system_libs(false)
