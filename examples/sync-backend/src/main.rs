@@ -20,12 +20,12 @@
 use axum::{
     extract::{BodyStream, Path, State, Query},
     response,
-    routing::{get},
+    routing::get,
     Router, Server,
 };
 use futures::StreamExt;
 use journal::{Journal, Protocol, Stream};
-use serde_sqlite::{de};
+use serde_sqlite::de;
 use std::io::Read;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -46,6 +46,7 @@ struct Params {
 /// post new journal snapshots
 async fn post_snapshot(
     State(state): State<AppState>,
+    Path(_domain): Path<String>,
     mut stream: BodyStream,
 ) -> Result<&'static str, String> {
     let mut whole_body = vec![];
@@ -63,14 +64,17 @@ async fn post_snapshot(
             Ok(Protocol::SnapshotHeader(snapshot_header)) => {
                 journal.commit().map_err(to_error)?;
                 journal.add_snapshot(&snapshot_header).map_err(to_error)?;
+                tracing::info!("snapshot: {:?}", snapshot_header.id);
             }
             Ok(Protocol::PageHeader(page_header)) => {
                 let mut page = vec![0; page_header.page_size as usize];
                 whole_body.read_exact(page.as_mut_slice()).map_err(to_error)?;
                 journal.add_page(&page_header, page.as_slice()).map_err(to_error)?;
+                tracing::info!("  page: {:?}", page_header.page_num);
             },
             Ok(Protocol::EndOfStream(_)) => {
                 journal.commit().map_err(to_error)?;
+                tracing::info!("end of stream");
                 break;
             },
             Err(e) => return Err(to_error(e)),
@@ -82,6 +86,7 @@ async fn post_snapshot(
 /// get latest knowns snapshot num
 async fn head_snapshot(
     State(state): State<AppState>,
+    Path(_domain): Path<String>,
 ) -> Result<impl response::IntoResponse, String> {
     let journal = state.journal.lock().await;
     let snapshot_id = match journal.current_snapshot() {
@@ -95,8 +100,8 @@ async fn head_snapshot(
 /// get new snapshots
 async fn get_snapshot(
     State(state): State<AppState>,
+    Path(_domain): Path<String>,
     params: Option<Query<Params>>,
-    _snapshot_id: Option<Path<u64>>,
 ) -> Result<impl response::IntoResponse, String> {
     let snapshot_id: u64 = params.unwrap_or_default().snapshot_id;
     let mut journal = state.journal.lock().await;
@@ -136,7 +141,7 @@ async fn main() {
         .init();
 
     let app = Router::new()
-        .route("/api/v0/snapshots", get(get_snapshot).head(head_snapshot).post(post_snapshot))
+        .route("/domain/:domain", get(get_snapshot).head(head_snapshot).post(post_snapshot))
         .with_state(AppState::new());
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
