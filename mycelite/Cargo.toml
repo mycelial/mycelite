@@ -18,6 +18,8 @@ once_cell = "1"
 
 # replicator
 ureq = { version = "2.5" }
+base64 = "0.21"
 
 # config
 toml = "0.7"
+

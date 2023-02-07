@@ -10,6 +10,10 @@ use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use base64::engine::{
+    Engine,
+    general_purpose::STANDARD as BASE64
+};
 
 enum Message {
     /// New snapshot added locally
@@ -86,13 +90,21 @@ impl Replicator {
             None => return Ok(()),
             Some(v) => v,
         };
-        let url = Self::get_url(&self.config);
-        let domain = Self::get_domain(&self.config);
-        let (url, domain) = match (url.as_ref(), domain.as_ref()) {
-            (Some(u), Some(d)) => (u, d),
-            _ => return Ok(()),
+        let url = match self.get_url() {
+            Some(url) => url,
+            None => return Ok(())
         };
-        let remote_snapshot_id = match Self::get_backend_current_snapshot(url, domain) {
+        // snapshot push always requires authorization (for now)
+        let client_id = self.get_key("client_id");
+        let secret = self.get_key("secret");
+        if client_id.is_none() || secret.is_none() {
+            return Ok(())
+        };
+        let remote_snapshot_id = match self.get_backend_current_snapshot(
+            &url,
+            client_id.as_ref().map(|s| s.as_str()),
+            secret.as_ref().map(|s| s.as_str())
+        ) {
             Ok(Some(v)) if v >= local_snapshot_id => {
                 return Ok(());
             }
@@ -102,7 +114,7 @@ impl Replicator {
         };
         // FIXME: status code are not checked
         let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
-        ureq::post(url).set("x-mcl-to", domain).send(stream)?;
+        ureq::post(&url).send(stream)?;
         Ok(())
     }
 
@@ -111,20 +123,24 @@ impl Replicator {
         &mut self,
     ) -> Result<(Option<u64>, Option<u64>), Box<dyn std::error::Error>> {
         let local_snapshot_id = self.journal.current_snapshot();
-        let url = Self::get_url(&self.config);
-        let domain = Self::get_domain(&self.config);
-        if url.is_none() || domain.is_none() {
-            return Ok((local_snapshot_id, local_snapshot_id));
+        let url = match self.get_url() {
+            Some(url) => url,
+            None => return Ok((local_snapshot_id, local_snapshot_id)),
         };
-        let (url, domain) = (&url.unwrap(), &domain.unwrap());
 
-        match Self::get_backend_current_snapshot(url, domain)? {
+        let client_id = self.get_key("client_id");
+        let secret = self.get_key("secret");
+
+        match self.get_backend_current_snapshot(
+            &url,
+            client_id.as_ref().map(|s| s.as_str()),
+            secret.as_ref().map(|s| s.as_str())
+        )? {
             Some(v) if local_snapshot_id < Some(v) => (),
             v => return Ok((local_snapshot_id, v)),
         };
 
-        let res = ureq::get(url)
-            .set("x-mcl-to", domain)
+        let res = ureq::get(&url)
             .query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string())
             .call()?;
 
@@ -171,13 +187,18 @@ impl Replicator {
 
     /// Fetch last snapshot id seen by sync backend
     fn get_backend_current_snapshot(
+        &self,
         url: &str,
-        domain: &str,
+        client_id: Option<&str>,
+        secret: Option<&str>
     ) -> Result<Option<u64>, Box<dyn std::error::Error>> {
-        let res = ureq::head(url)
-            .set("x-mcl-to", domain)
-            .timeout(std::time::Duration::from_secs(5))
-            .call()?;
+        let mut req = ureq::head(url)
+            .timeout(std::time::Duration::from_secs(5));
+
+        if let Some(b) = self.get_basic_auth_header(client_id, secret) {
+            req = req.set("Authorization", &b)
+        }
+        let res = req.call()?;
 
         match res.header("x-snapshot-id") {
             Some(value) if value.is_empty() => Ok(None),
@@ -186,17 +207,25 @@ impl Replicator {
         }
     }
 
-    fn get_domain(config: &Arc<Mutex<Config>>) -> Option<String> {
-        config.lock().unwrap().get("domain").map(|s| s.to_owned())
+    fn get_key(&self, key: &str) -> Option<String> {
+        self.config.lock().unwrap().get(key).map(|s| s.to_owned())
     }
 
-    fn get_url(config: &Arc<Mutex<Config>>) -> Option<String> {
-        config
-            .lock()
-            .unwrap()
-            .get("endpoint")
-            .map(|s| format!("{s}/api/v0/snapshots"))
+    fn get_url(&self) -> Option<String> {
+        if let (Some(endpoint), Some(domain)) = (self.get_key("endpoint"), self.get_key("domain")) {
+            return Some(format!("{endpoint}/domain/{domain}"))
+        }
+        None
     }
+
+    fn get_basic_auth_header(&self, client_id: Option<&str>, secret: Option<&str>) -> Option<String> {
+        if let(Some(client_id), Some(secret)) = (client_id, secret) {
+            return Some(format!("Basic {}", BASE64.encode(format!("{client_id}:{secret}"))));
+        } else {
+            None
+        }
+
+}
 }
 
 #[derive(Debug)]
