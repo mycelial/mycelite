@@ -3,6 +3,7 @@
 //! ** For demo use only! **
 
 use crate::config::{Config, ConfigRegistry};
+use base64::engine::{general_purpose::STANDARD as BASE64, Engine};
 use journal::{Journal, Protocol, Stream};
 use serde_sqlite::de;
 use std::io::{Seek, SeekFrom, Write};
@@ -10,10 +11,6 @@ use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use base64::engine::{
-    Engine,
-    general_purpose::STANDARD as BASE64
-};
 
 enum Message {
     /// New snapshot added locally
@@ -92,18 +89,18 @@ impl Replicator {
         };
         let url = match self.get_url() {
             Some(url) => url,
-            None => return Ok(())
+            None => return Ok(()),
         };
         // snapshot push always requires authorization (for now)
         let client_id = self.get_key("client_id");
         let secret = self.get_key("secret");
         if client_id.is_none() || secret.is_none() {
-            return Ok(())
+            return Ok(());
         };
         let remote_snapshot_id = match self.get_backend_current_snapshot(
             &url,
-            client_id.as_ref().map(|s| s.as_str()),
-            secret.as_ref().map(|s| s.as_str())
+            client_id.as_deref(),
+            secret.as_deref(),
         ) {
             Ok(Some(v)) if v >= local_snapshot_id => {
                 return Ok(());
@@ -131,11 +128,7 @@ impl Replicator {
         let client_id = self.get_key("client_id");
         let secret = self.get_key("secret");
 
-        match self.get_backend_current_snapshot(
-            &url,
-            client_id.as_ref().map(|s| s.as_str()),
-            secret.as_ref().map(|s| s.as_str())
-        )? {
+        match self.get_backend_current_snapshot(&url, client_id.as_deref(), secret.as_deref())? {
             Some(v) if local_snapshot_id < Some(v) => (),
             v => return Ok((local_snapshot_id, v)),
         };
@@ -190,10 +183,9 @@ impl Replicator {
         &self,
         url: &str,
         client_id: Option<&str>,
-        secret: Option<&str>
+        secret: Option<&str>,
     ) -> Result<Option<u64>, Box<dyn std::error::Error>> {
-        let mut req = ureq::head(url)
-            .timeout(std::time::Duration::from_secs(5));
+        let mut req = ureq::head(url).timeout(std::time::Duration::from_secs(5));
 
         if let Some(b) = self.get_basic_auth_header(client_id, secret) {
             req = req.set("Authorization", &b)
@@ -213,19 +205,25 @@ impl Replicator {
 
     fn get_url(&self) -> Option<String> {
         if let (Some(endpoint), Some(domain)) = (self.get_key("endpoint"), self.get_key("domain")) {
-            return Some(format!("{endpoint}/domain/{domain}"))
+            return Some(format!("{endpoint}/domain/{domain}"));
         }
         None
     }
 
-    fn get_basic_auth_header(&self, client_id: Option<&str>, secret: Option<&str>) -> Option<String> {
-        if let(Some(client_id), Some(secret)) = (client_id, secret) {
-            return Some(format!("Basic {}", BASE64.encode(format!("{client_id}:{secret}"))));
+    fn get_basic_auth_header(
+        &self,
+        client_id: Option<&str>,
+        secret: Option<&str>,
+    ) -> Option<String> {
+        if let (Some(client_id), Some(secret)) = (client_id, secret) {
+            return Some(format!(
+                "Basic {}",
+                BASE64.encode(format!("{client_id}:{secret}"))
+            ));
         } else {
             None
         }
-
-}
+    }
 }
 
 #[derive(Debug)]
