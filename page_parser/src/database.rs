@@ -3,7 +3,7 @@ use crate::header::Header;
 use crate::page::RawPage;
 use serde_sqlite::from_bytes;
 use std::io::BufReader;
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -50,16 +50,20 @@ pub struct RawPageIter {
 }
 
 impl Iterator for RawPageIter {
-    type Item = Result<RawPage, std::io::Error>;
+    type Item = Result<(u64, RawPage), std::io::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.pages_left == 0 {
             return None;
         };
         self.pages_left -= 1;
+        let offset = match self.fd.seek(SeekFrom::Current(0)) {
+            Err(e) => return Some(Err(e)),
+            Ok(offset) => offset,
+        };
         let mut page = vec![0; self.page_size as usize];
         match self.fd.read_exact(page.as_mut_slice()) {
-            Ok(_) => Some(Ok(RawPage::new(page))),
+            Ok(_) => Some(Ok((offset, RawPage::new(page)))),
             Err(e) => {
                 self.pages_left = 0;
                 Some(Err(e))

@@ -145,10 +145,10 @@ impl MclVFSFile {
                 return Err(e);
             }
         };
-        for (page_num, page) in iter.enumerate() {
-            let page = page?;
+        for res in iter {
+            let (offset, page) = res?;
             let page = page.as_slice();
-            journal.new_page((page_num * page.len()) as u64, page)?;
+            journal.new_page(offset, page)?;
         }
         journal.commit().map_err(Into::into)
     }
