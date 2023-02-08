@@ -139,9 +139,8 @@ impl Replicator {
             v => return Ok((local_snapshot_id, v)),
         };
 
-
-        let mut req = ureq::get(&url)
-            .query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string());
+        let mut req =
+            ureq::get(&url).query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string());
 
         if let Some(b) = self.get_basic_auth_header(client_id.as_deref(), secret.as_deref()) {
             req = req.set("Authorization", &b)
