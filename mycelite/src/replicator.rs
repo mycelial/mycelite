@@ -111,7 +111,22 @@ impl Replicator {
         };
         // FIXME: status code are not checked
         let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
-        ureq::post(&url).send(stream)?;
+
+        let mut req = ureq::post(&url);
+
+        if let (Some(client_id), Some(secret)) = (client_id, secret) {
+            let v = format!(
+                "Basic {}",
+                BASE64.encode(format!("{client_id}:{secret}"))
+            );
+
+            req = req.set("Authorization", &v)
+        }
+
+        println!("{:?}", req);
+
+        req.send(stream)?;
+
         Ok(())
     }
 
