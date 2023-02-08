@@ -70,7 +70,7 @@ impl Replicator {
                     self.maybe_push_snapshots().ok();
                 }
             }
-            match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            match rx.recv_timeout(std::time::Duration::from_secs(5)) {
                 Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => (),
                 Ok(Message::Quit) => return,
@@ -109,24 +109,15 @@ impl Replicator {
             Ok(None) => 0,
             Err(_) => return Err("error".into()),
         };
-        // FIXME: status code are not checked
-        let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
 
         let mut req = ureq::post(&url);
-
-        if let (Some(client_id), Some(secret)) = (client_id, secret) {
-            let v = format!(
-                "Basic {}",
-                BASE64.encode(format!("{client_id}:{secret}"))
-            );
-
-            req = req.set("Authorization", &v)
+        if let Some(b) = self.get_basic_auth_header(client_id.as_deref(), secret.as_deref()) {
+            req = req.set("Authorization", &b)
         }
+        let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
 
-        println!("{:?}", req);
-
+        // FIXME: status code are not checked
         req.send(stream)?;
-
         Ok(())
     }
 
@@ -148,9 +139,14 @@ impl Replicator {
             v => return Ok((local_snapshot_id, v)),
         };
 
-        let res = ureq::get(&url)
-            .query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string())
-            .call()?;
+
+        let mut req = ureq::get(&url)
+            .query("snapshot-id", &local_snapshot_id.unwrap_or(0).to_string());
+
+        if let Some(b) = self.get_basic_auth_header(client_id.as_deref(), secret.as_deref()) {
+            req = req.set("Authorization", &b)
+        }
+        let res = req.call()?;
 
         let mut reader = res.into_reader();
         loop {
