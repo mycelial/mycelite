@@ -161,6 +161,7 @@ impl<F: Read + Write + Seek> Journal<F> {
         if self.page_count.is_some() {
             return Ok(());
         }
+        self.update_header()?;
         let snapshot_header = SnapshotHeader::new(
             self.header.snapshot_counter,
             chrono::Utc::now().timestamp_micros(),
