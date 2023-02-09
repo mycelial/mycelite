@@ -5,6 +5,9 @@ mod replicator;
 mod vfs;
 use libsqlite_sys::ffi;
 use std::ffi::{c_char, c_int};
+use once_cell::sync::OnceCell;
+
+static INITIALIZED: OnceCell<bool> = OnceCell::new();
 
 libsqlite_sys::setup!();
 
@@ -14,6 +17,11 @@ pub unsafe fn sqlite3_mycelite_init(
     _err: *mut *mut c_char,
     api: *mut ffi::sqlite3_api_routines,
 ) -> c_int {
+    if INITIALIZED.set(true).is_err() {
+        // already initialized
+        return ffi::SQLITE_OK
+    }
+
     libsqlite_sys::init!(api);
 
     // sqlite default vfs
