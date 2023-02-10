@@ -4,6 +4,7 @@ use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use spin_sleep::sleep;
 
 #[test]
 fn test_journal_not_exists() {
@@ -385,7 +386,7 @@ fn test_journal_concurrent_updates() {
                         .unwrap();
                     journal_1.commit().unwrap();
                     drop(guard);
-                    std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
+                    sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
                 });
             });
             s.spawn(|| {
@@ -396,7 +397,7 @@ fn test_journal_concurrent_updates() {
                         .unwrap();
                     journal_2.commit().unwrap();
                     drop(guard);
-                    std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
+                    sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
                 });
             });
         });
@@ -424,7 +425,7 @@ fn test_journal_concurrent_updates() {
                     break;
                 }
                 drop(i);
-                std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
+                sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
             });
             s.spawn(|| loop {
                 let mut i = iter.lock().unwrap();
@@ -437,7 +438,7 @@ fn test_journal_concurrent_updates() {
                     break;
                 }
                 drop(i);
-                std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
+                sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
             });
         });
         assert!(journal_1
