@@ -1,8 +1,9 @@
 use block::Block;
 use journal::{Header, Journal, Protocol, Stream};
 use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
-use std::io::{Cursor, Read, Write, Seek, SeekFrom};
-use std::sync::{Mutex, Arc};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[test]
 fn test_journal_not_exists() {
@@ -316,18 +317,22 @@ fn test_journal_rebuild_from_stream() {
 
 #[derive(Debug)]
 struct ShareableCursor {
-    cur: Arc<Mutex<Cursor<Vec<u8>>>>
+    cur: Arc<Mutex<Cursor<Vec<u8>>>>,
 }
 
 impl ShareableCursor {
     fn new() -> Self {
-        Self { cur: Arc::new(Mutex::new(Cursor::new(vec![]))) }
+        Self {
+            cur: Arc::new(Mutex::new(Cursor::new(vec![]))),
+        }
     }
 }
 
 impl Clone for ShareableCursor {
     fn clone(&self) -> Self {
-        Self { cur: Arc::clone(&self.cur) }
+        Self {
+            cur: Arc::clone(&self.cur),
+        }
     }
 }
 
@@ -353,11 +358,10 @@ impl Seek for ShareableCursor {
     }
 }
 
-
 // Test journal ability to work concurrently on same underlying IO resource
 #[test]
 fn test_journal_concurrent_updates() {
-    fn check(size: usize) -> TestResult {
+    fn check(size: usize, prng: XorShift) -> TestResult {
         // limit max number of snapshots
         let size = (size % 1000).max(1);
         let file = ShareableCursor::new();
@@ -369,31 +373,39 @@ fn test_journal_concurrent_updates() {
         let snapshots = (0..size).map(|s| vec![0; s + 1]).collect::<Vec<Vec<u8>>>();
         let (s1, s2) = snapshots.as_slice().split_at(snapshots.len() / 2);
 
+        let prng = Mutex::new(prng);
+
         // test concurrent snapshot creation
         std::thread::scope(|s| {
             s.spawn(|| {
                 s1.iter().for_each(|page| {
                     let guard = lock.lock().unwrap();
-                    journal_1.new_page(page.len() as u64, page.as_slice()).unwrap();
+                    journal_1
+                        .new_page(page.len() as u64, page.as_slice())
+                        .unwrap();
                     journal_1.commit().unwrap();
                     drop(guard);
-                })
+                    std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
+                });
             });
             s.spawn(|| {
                 s2.iter().for_each(|page| {
                     let guard = lock.lock().unwrap();
-                    journal_2.new_page(page.len() as u64, page.as_slice()).unwrap();
+                    journal_2
+                        .new_page(page.len() as u64, page.as_slice())
+                        .unwrap();
                     journal_2.commit().unwrap();
                     drop(guard);
-                })
+                    std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
+                });
             });
         });
-        assert!(
-            journal_1.into_iter()
-                .zip(journal_2.into_iter())
-                .all(|(left, right)| left.unwrap() == right.unwrap())
-        );
-        
+
+        assert!(journal_1
+            .into_iter()
+            .zip(journal_2.into_iter())
+            .all(|(left, right)| left.unwrap() == right.unwrap()));
+
         // test concurrent snapshot addition
         let file_re = ShareableCursor::new();
         let journal_1_re = &mut Journal::new(Header::default(), file_re.clone(), None).unwrap();
@@ -401,47 +413,43 @@ fn test_journal_concurrent_updates() {
 
         let iter = Mutex::new(journal_1.into_iter());
         std::thread::scope(|s| {
-            s.spawn(|| {
-                loop {
-                    let mut i = iter.lock().unwrap();
-                    if let Some(res) = i.next() {
-                        let (snapshot_h, page_h, page) = res.unwrap();
-                        journal_1_re.add_snapshot(&snapshot_h).unwrap();
-                        journal_1_re.add_page(&page_h, page.as_slice()).unwrap();
-                        journal_1_re.commit().unwrap();
-                    } else {
-                        break
-                    }
-                    drop(i);
+            s.spawn(|| loop {
+                let mut i = iter.lock().unwrap();
+                if let Some(res) = i.next() {
+                    let (snapshot_h, page_h, page) = res.unwrap();
+                    journal_1_re.add_snapshot(&snapshot_h).unwrap();
+                    journal_1_re.add_page(&page_h, page.as_slice()).unwrap();
+                    journal_1_re.commit().unwrap();
+                } else {
+                    break;
                 }
+                drop(i);
+                std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
             });
-            s.spawn(|| {
-                loop {
-                    let mut i = iter.lock().unwrap();
-                    if let Some(res) = i.next() {
-                        let (snapshot_h, page_h, page) = res.unwrap();
-                        journal_2_re.add_snapshot(&snapshot_h).unwrap();
-                        journal_2_re.add_page(&page_h, page.as_slice()).unwrap();
-                        journal_2_re.commit().unwrap();
-                    } else {
-                        break
-                    }
-                    drop(i);
+            s.spawn(|| loop {
+                let mut i = iter.lock().unwrap();
+                if let Some(res) = i.next() {
+                    let (snapshot_h, page_h, page) = res.unwrap();
+                    journal_2_re.add_snapshot(&snapshot_h).unwrap();
+                    journal_2_re.add_page(&page_h, page.as_slice()).unwrap();
+                    journal_2_re.commit().unwrap();
+                } else {
+                    break;
                 }
+                drop(i);
+                std::thread::sleep(Duration::from_micros(prng.lock().unwrap().next() % 10));
             });
         });
-        assert!(
-            journal_1.into_iter()
-                .zip(journal_1_re.into_iter())
-                .all(|(left, right)| left.unwrap() == right.unwrap())
-        );
-        assert!(
-            journal_1_re.into_iter()
-                .zip(journal_2_re.into_iter())
-                .all(|(left, right)| left.unwrap() == right.unwrap())
-        );
-        
+        assert!(journal_1
+            .into_iter()
+            .zip(journal_1_re.into_iter())
+            .all(|(left, right)| left.unwrap() == right.unwrap()));
+        assert!(journal_1_re
+            .into_iter()
+            .zip(journal_2_re.into_iter())
+            .all(|(left, right)| left.unwrap() == right.unwrap()));
+
         TestResult::from_bool(true)
     }
-    quickcheck(check as fn(usize) -> TestResult)
+    quickcheck(check as fn(usize, XorShift) -> TestResult)
 }
