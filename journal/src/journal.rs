@@ -152,8 +152,9 @@ impl<F: Read + Write + Seek> Journal<F> {
         })
     }
 
-    /// Initiate snapshot
+    /// Initiate new snapshot
     ///
+    /// * udpate journal header to correctly setup offset
     /// * to initiate snapshot we seek to current end of the file (value stored in header)
     /// * switch fd to buffered mode
     /// * write snapshot header with current header counter number
@@ -166,7 +167,7 @@ impl<F: Read + Write + Seek> Journal<F> {
             self.header.snapshot_counter,
             chrono::Utc::now().timestamp_micros(),
         );
-        self.add_snapshot(&snapshot_header)
+        self.write_snapshot(&snapshot_header)
     }
 
     /// Add new sqlite page
@@ -181,8 +182,18 @@ impl<F: Read + Write + Seek> Journal<F> {
         self.add_page(&page_header, page)
     }
 
-    /// Add snapshot
+    /// Add existing snapshot
+    ///
+    /// Re-syncs journal header
     pub fn add_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
+        self.update_header()?;
+        self.write_snapshot(snapshot_header)
+    }
+
+    /// Write snapshot to journal
+    ///
+    /// This function assumes journal header is up to date
+    fn write_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
         if snapshot_header.id != self.header.snapshot_counter {
             return Err(Error::OutOfOrderSnapshot {
                 snapshot_id: snapshot_header.id,
