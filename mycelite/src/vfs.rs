@@ -104,7 +104,7 @@ struct MclVFSFile {
     journal: Option<mem::ManuallyDrop<Journal>>,
     read_only: bool,
     replicator: Option<mem::ManuallyDrop<replicator::ReplicatorHandle>>,
-    mutex: mem::ManuallyDrop<Arc<Mutex<()>>>,
+    mutex: Option<mem::ManuallyDrop<Arc<Mutex<()>>>>,
     mutex_guard: Option<mem::ManuallyDrop<MutexGuard<'static, ()>>>,
     vfs: *mut ffi::sqlite3_vfs,
     real: ffi::sqlite3_file,
@@ -115,7 +115,7 @@ impl MclVFSFile {
     unsafe fn init(&mut self, vfs: *mut ffi::sqlite3_vfs) {
         self.vfs = vfs;
         self.read_only = MclVFS::from_raw_ptr(vfs).read_only;
-        self.mutex = mem::ManuallyDrop::new(Arc::new(Mutex::new(())));
+        self.mutex = Some(mem::ManuallyDrop::new(Arc::new(Mutex::new(()))));
         self.mutex_guard = None
     }
 
@@ -157,7 +157,6 @@ impl MclVFSFile {
         &mut self,
         flags: c_int,
         zname: *const c_char,
-        lock: Arc<Mutex<()>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if flags & ffi::SQLITE_OPEN_MAIN_DB == 0 {
             self.journal = None;
@@ -182,6 +181,7 @@ impl MclVFSFile {
         };
         self.journal = Some(mem::ManuallyDrop::new(journal));
 
+        let lock = Arc::clone(self.mutex.as_ref().unwrap());
         self.replicator = Some(mem::ManuallyDrop::new(
             replicator::Replicator::new(&journal_path, database_path, self.read_only, lock).spawn(),
         ));
@@ -198,7 +198,9 @@ impl MclVFSFile {
         if self.mutex_guard.is_some() {
             return;
         };
-        self.mutex_guard = Some(mem::ManuallyDrop::new(self.mutex.lock().unwrap()));
+        if let Some(mutex) = self.mutex.as_ref() {
+            self.mutex_guard = Some(mem::ManuallyDrop::new(mutex.lock().unwrap()))
+        };
     }
 
     fn unlock(&mut self) {
@@ -220,7 +222,7 @@ unsafe extern "C" fn mvfs_open(
     let file = MclVFSFile::from_ptr(file);
     file.init(vfs);
     if file
-        .setup_journal(flags, zname, Arc::clone(&file.mutex))
+        .setup_journal(flags, zname)
         .is_err()
     {
         return ffi::SQLITE_ERROR;
@@ -348,6 +350,7 @@ static MclVFSIO: ffi::sqlite3_io_methods = ffi::sqlite3_io_methods {
 unsafe extern "C" fn mvfs_io_close(pfile: *mut ffi::sqlite3_file) -> c_int {
     let file = MclVFSFile::from_ptr(pfile);
     file.unlock();
+    file.mutex.take().map(mem::ManuallyDrop::into_inner);
     file.journal.take().map(mem::ManuallyDrop::into_inner);
     file.replicator.take().map(mem::ManuallyDrop::into_inner);
     (*file.real.pMethods).xClose.unwrap()(&mut file.real)
