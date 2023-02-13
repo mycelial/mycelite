@@ -338,6 +338,10 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.initialized {
+            if let Err(e) = self.journal.update_header() {
+                self.eoi = true;
+                return Some(Err(e.into()))
+            }
             match self
                 .journal
                 .fd

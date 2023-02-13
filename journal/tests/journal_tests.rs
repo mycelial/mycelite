@@ -407,6 +407,20 @@ fn test_journal_concurrent_updates() {
             .zip(journal_2.into_iter())
             .all(|(left, right)| left.unwrap() == right.unwrap()));
 
+        assert_eq!(
+            journal_1.into_iter().count(),
+            journal_2.into_iter().count()
+        );
+        // it's matches only because we have one page per snapshot
+        assert_eq!(
+            journal_1.into_iter().count(),
+            size
+        );
+        assert_eq!(
+            journal_1.get_header().snapshot_counter,
+            size as u64
+        );
+
         // test concurrent snapshot addition
         let file_re = ShareableCursor::new();
         let journal_1_re = &mut Journal::new(Header::default(), file_re.clone(), None).unwrap();
@@ -445,10 +459,21 @@ fn test_journal_concurrent_updates() {
             .into_iter()
             .zip(journal_1_re.into_iter())
             .all(|(left, right)| left.unwrap() == right.unwrap()));
+
+        assert_eq!(
+            journal_1.into_iter().count(),
+            journal_1_re.into_iter().count(),
+        );
+
         assert!(journal_1_re
             .into_iter()
             .zip(journal_2_re.into_iter())
             .all(|(left, right)| left.unwrap() == right.unwrap()));
+
+        assert_eq!(
+            journal_1_re.into_iter().count(),
+            journal_2_re.into_iter().count(),
+        );
 
         TestResult::from_bool(true)
     }
