@@ -12,6 +12,11 @@ struct DefaultVfs(*mut ffi::sqlite3_vfs);
 unsafe impl Sync for DefaultVfs {}
 unsafe impl Send for DefaultVfs {}
 
+// The pointer to a vfs that sqlite3 uses by default depending on the OS
+// - Linux/MacOS - unix
+// - Windows - win32
+//
+// The pointer is used to properly setup the Mycelite VFS.
 static DEFAULT_VFS: OnceCell<DefaultVfs> = OnceCell::new();
 
 libsqlite_sys::setup!();
