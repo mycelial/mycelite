@@ -340,7 +340,7 @@ where
         if !self.initialized {
             if let Err(e) = self.journal.update_header() {
                 self.eoi = true;
-                return Some(Err(e.into()))
+                return Some(Err(e))
             }
             match self
                 .journal

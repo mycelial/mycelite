@@ -3,7 +3,7 @@ use crate::header::Header;
 use crate::page::RawPage;
 use serde_sqlite::from_bytes;
 use std::io::BufReader;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -57,7 +57,7 @@ impl Iterator for RawPageIter {
             return None;
         };
         self.pages_left -= 1;
-        let offset = match self.fd.seek(SeekFrom::Current(0)) {
+        let offset = match self.fd.stream_position() {
             Err(e) => return Some(Err(e)),
             Ok(offset) => offset,
         };
