@@ -8,7 +8,7 @@ on:
 jobs:
   release:
     runs-on: ${{ matrix.os }}
-    
+
     env:
       RUSTFLAGS: "-C target-feature=-crt-static"
       PKG_CONFIG_ALLOW_CROSS: 1
@@ -44,7 +44,7 @@ jobs:
           - build: windows
             os: windows-2022
             target: x86_64-pc-windows-gnu
-            
+
 
     steps:
       - name: checkout
@@ -59,7 +59,7 @@ jobs:
       - name: install packages (macos)
         if: matrix.build == 'macos'
         run: |
-          brew install sqlite3
+          brew install sqlite3 pkg-config
 
       - name: install packages (windows)
         if: matrix.build == 'windows'
