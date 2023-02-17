@@ -221,10 +221,7 @@ unsafe extern "C" fn mvfs_open(
 ) -> c_int {
     let file = MclVFSFile::from_ptr(file);
     file.init(vfs);
-    if file
-        .setup_journal(flags, zname)
-        .is_err()
-    {
+    if file.setup_journal(flags, zname).is_err() {
         return ffi::SQLITE_ERROR;
     }
     file.base.pMethods = &MclVFSIO as *const _;
