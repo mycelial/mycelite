@@ -383,6 +383,22 @@ impl Seek for ShareableBufferCursor<'_> {
 unsafe impl Send for ShareableBufferCursor<'_> {}
 unsafe impl Sync for ShareableBufferCursor<'_> {}
 
+#[test]
+fn test_shareablebuffer() {
+    fn check(s: String) {
+        let bytes = s.as_bytes();
+        let sh_buf = ShareableBuffer::new();
+        let mut cursor_1 = sh_buf.cursor();
+        let mut cursor_2 = sh_buf.cursor();
+
+        assert!(cursor_1.write_all(bytes).is_ok());
+        let mut buf = vec![];
+        assert!(cursor_2.read_to_end(&mut buf).is_ok());
+        assert_eq!(buf, bytes);
+    }
+    quickcheck::quickcheck(check as fn(String))
+}
+
 // Test journal ability to work concurrently on same underlying IO resource
 #[test]
 fn test_journal_concurrent_updates() {
