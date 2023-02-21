@@ -159,6 +159,7 @@ impl<F: Read + Write + Seek> Journal<F> {
         self.buffer_sz = buffer_sz;
     }
 
+    /// Get buffer size
     pub fn buffer_size(&self) -> usize {
         self.buffer_sz
     }
