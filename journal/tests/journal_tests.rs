@@ -5,6 +5,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use spin_sleep::sleep;
+use std::cell::UnsafeCell;
 
 #[test]
 fn test_journal_not_exists() {
@@ -317,58 +318,99 @@ fn test_journal_rebuild_from_stream() {
 }
 
 #[derive(Debug)]
-struct ShareableCursor {
-    cur: Arc<Mutex<Cursor<Vec<u8>>>>,
+struct ShareableBuffer {
+    buf: Arc<UnsafeCell<(Mutex<()>, Vec<u8>)>>,
 }
 
-impl ShareableCursor {
+impl ShareableBuffer {
     fn new() -> Self {
         Self {
-            cur: Arc::new(Mutex::new(Cursor::new(vec![]))),
+            buf: Arc::new(UnsafeCell::new((Mutex::new(()), vec![])))
         }
+    }
+    
+    fn cursor(&self) -> ShareableBufferCursor {
+        ShareableBufferCursor::new(Arc::clone(&self.buf))
     }
 }
 
-impl Clone for ShareableCursor {
-    fn clone(&self) -> Self {
+struct ShareableBufferCursor<'a> {
+    buf: Arc<UnsafeCell<(Mutex<()>, Vec<u8>)>>,
+    cur: Cursor<&'a mut Vec<u8>>
+}
+
+impl ShareableBufferCursor<'_> {
+    fn new(buf: Arc<UnsafeCell<(Mutex<()>, Vec<u8>)>>) -> Self {
+        let buf_ref = unsafe { &mut (*buf.get()).1 };
         Self {
-            cur: Arc::clone(&self.cur),
+            buf,
+            cur: Cursor::new(buf_ref)
         }
     }
 }
 
-impl Read for ShareableCursor {
+
+impl Read for ShareableBufferCursor<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.cur.lock().unwrap().read(buf)
+        let mutex = unsafe { &(*self.buf.get()).0 };
+        let _guard = mutex.lock().unwrap();
+        self.cur.read(buf)
     }
 }
 
-impl Write for ShareableCursor {
+impl Write for ShareableBufferCursor<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.cur.lock().unwrap().write(buf)
+        let mutex = unsafe { &(*self.buf.get()).0 };
+        let _guard = mutex.lock().unwrap();
+        self.cur.write(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.cur.lock().unwrap().flush()
+        let mutex = unsafe { &(*self.buf.get()).0 };
+        let _guard = mutex.lock().unwrap();
+        self.cur.flush()
     }
 }
 
-impl Seek for ShareableCursor {
+impl Seek for ShareableBufferCursor<'_> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.cur.lock().unwrap().seek(pos)
+        let mutex = unsafe { &(*self.buf.get()).0 };
+        let _guard = mutex.lock().unwrap();
+        self.cur.seek(pos)
     }
+}
+
+unsafe impl Send for ShareableBufferCursor<'_> {}
+unsafe impl Sync for ShareableBufferCursor<'_> {}
+
+#[test]
+fn test_shareablebuffer() {
+    fn check(s: String) {
+        let bytes = s.as_bytes();
+        let sh_buf = ShareableBuffer::new();
+        let mut cursor_1 = sh_buf.cursor();
+        let mut cursor_2 = sh_buf.cursor();
+
+        assert!(cursor_1.write_all(bytes).is_ok());
+        let mut buf = vec![];
+        assert!(cursor_2.read_to_end(&mut buf).is_ok());
+        assert_eq!(buf, bytes);
+    }
+    quickcheck::quickcheck(check as fn(String))
 }
 
 // Test journal ability to work concurrently on same underlying IO resource
 #[test]
 fn test_journal_concurrent_updates() {
-    fn check(size: usize, prng: XorShift) -> TestResult {
+    fn check(size: usize, mut prng: XorShift) -> TestResult {
         // limit max number of snapshots
         let size = (size % 1000).max(1);
-        let file = ShareableCursor::new();
+        let buf = ShareableBuffer::new();
 
-        let journal_1 = &mut Journal::new(Header::default(), file.clone(), None).unwrap();
-        let journal_2 = &mut Journal::new(Header::default(), file, None).unwrap();
+        let journal_1 = &mut Journal::new(Header::default(), buf.cursor(), None).unwrap();
+        journal_1.set_buffer_size((prng.next() % 0x0001_0000).max(1) as usize);
+        let journal_2 = &mut Journal::new(Header::default(), buf.cursor(), None).unwrap();
+        journal_2.set_buffer_size((prng.next() % 0x0001_0000).max(1) as usize);
         let lock = Mutex::new(());
 
         let snapshots = (0..size).map(|s| vec![0; s + 1]).collect::<Vec<Vec<u8>>>();
@@ -422,9 +464,9 @@ fn test_journal_concurrent_updates() {
         );
 
         // test concurrent snapshot addition
-        let file_re = ShareableCursor::new();
-        let journal_1_re = &mut Journal::new(Header::default(), file_re.clone(), None).unwrap();
-        let journal_2_re = &mut Journal::new(Header::default(), file_re, None).unwrap();
+        let buf_re = ShareableBuffer::new();
+        let journal_1_re = &mut Journal::new(Header::default(), buf_re.cursor(), None).unwrap();
+        let journal_2_re = &mut Journal::new(Header::default(), buf_re.cursor(), None).unwrap();
 
         let iter = Mutex::new(journal_1.into_iter());
         std::thread::scope(|s| {
