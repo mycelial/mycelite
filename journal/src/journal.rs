@@ -9,6 +9,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path;
 
 pub(crate) const MAGIC: u32 = 0x00907A70;
+const DEFAULT_BUFFER_SIZE: usize = 65536;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -23,6 +24,8 @@ where
     fd: Fd<F, BufWriter<F>, BufReader<F>>,
     /// snapshot page count
     page_count: Option<u32>,
+    /// Buffer size
+    buffer_sz: usize,
 }
 
 #[derive(Debug)]
@@ -54,19 +57,17 @@ where
     }
 
     /// Switch Fd to buffered write mode
-    pub fn as_writer(&mut self) {
+    pub fn as_writer(&mut self, buf_size: usize) {
         let fd = self.as_fd();
-        // FIXME: hardcoded buffer size (1 MB)
-        // FIXME: buffer allocation is not checked
-        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(0x0010_0000, fd)));
+        // FIXME: re-use buffer
+        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(buf_size, fd)));
     }
 
     /// Switch Fd to buffered read mode
-    pub fn as_reader(&mut self) {
+    pub fn as_reader(&mut self, buf_size: usize) {
         let fd = self.as_fd();
-        // FIXME: hardcoded buffer size (1 MB)
-        // FIXME: buffer capacity is not checked
-        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(0x0010_0000, fd)));
+        // FIXME: re-use buffer
+        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(buf_size, fd)));
     }
 }
 
@@ -149,7 +150,17 @@ impl<F: Read + Write + Seek> Journal<F> {
             header,
             fd,
             page_count,
+            buffer_sz: DEFAULT_BUFFER_SIZE,
         })
+    }
+
+    /// Set buffer size
+    pub fn set_buffer_size(&mut self, buffer_sz: usize) {
+        self.buffer_sz = buffer_sz;
+    }
+
+    pub fn buffer_size(&self) -> usize {
+        self.buffer_sz
     }
 
     /// Initiate new snapshot
@@ -201,7 +212,7 @@ impl<F: Read + Write + Seek> Journal<F> {
             });
         }
         self.fd.seek(SeekFrom::Start(self.header.eof))?;
-        self.fd.as_writer();
+        self.fd.as_writer(self.buffer_sz);
         self.fd.write_all(&to_bytes(snapshot_header)?)?;
         self.page_count = Some(0);
         Ok(())
@@ -263,7 +274,7 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Update journal header
     pub fn update_header(&mut self) -> Result<()> {
-        self.fd.as_reader();
+        self.fd.as_reader(self.buffer_sz);
         self.header = Self::read_header(&mut self.fd)?;
         Ok(())
     }
@@ -353,7 +364,7 @@ where
                     return Some(Err(e.into()));
                 }
             };
-            self.journal.fd.as_reader();
+            self.journal.fd.as_reader(self.journal.buffer_sz);
             self.initialized = true;
         }
         if self.eoi {
