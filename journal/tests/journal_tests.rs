@@ -1,11 +1,11 @@
 use block::Block;
 use journal::{Header, Journal, Protocol, Stream};
 use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
+use spin_sleep::sleep;
+use std::cell::UnsafeCell;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use spin_sleep::sleep;
-use std::cell::UnsafeCell;
 
 #[test]
 fn test_journal_not_exists() {
@@ -325,10 +325,10 @@ struct ShareableBuffer {
 impl ShareableBuffer {
     fn new() -> Self {
         Self {
-            buf: Arc::new(UnsafeCell::new((Mutex::new(()), vec![])))
+            buf: Arc::new(UnsafeCell::new((Mutex::new(()), vec![]))),
         }
     }
-    
+
     fn cursor(&self) -> ShareableBufferCursor {
         ShareableBufferCursor::new(Arc::clone(&self.buf))
     }
@@ -336,7 +336,7 @@ impl ShareableBuffer {
 
 struct ShareableBufferCursor<'a> {
     buf: Arc<UnsafeCell<(Mutex<()>, Vec<u8>)>>,
-    cur: Cursor<&'a mut Vec<u8>>
+    cur: Cursor<&'a mut Vec<u8>>,
 }
 
 impl ShareableBufferCursor<'_> {
@@ -344,11 +344,10 @@ impl ShareableBufferCursor<'_> {
         let buf_ref = unsafe { &mut (*buf.get()).1 };
         Self {
             buf,
-            cur: Cursor::new(buf_ref)
+            cur: Cursor::new(buf_ref),
         }
     }
 }
-
 
 impl Read for ShareableBufferCursor<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -449,19 +448,10 @@ fn test_journal_concurrent_updates() {
             .zip(journal_2.into_iter())
             .all(|(left, right)| left.unwrap() == right.unwrap()));
 
-        assert_eq!(
-            journal_1.into_iter().count(),
-            journal_2.into_iter().count()
-        );
+        assert_eq!(journal_1.into_iter().count(), journal_2.into_iter().count());
         // it's matches only because we have one page per snapshot
-        assert_eq!(
-            journal_1.into_iter().count(),
-            size
-        );
-        assert_eq!(
-            journal_1.get_header().snapshot_counter,
-            size as u64
-        );
+        assert_eq!(journal_1.into_iter().count(), size);
+        assert_eq!(journal_1.get_header().snapshot_counter, size as u64);
 
         // test concurrent snapshot addition
         let buf_re = ShareableBuffer::new();
