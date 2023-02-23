@@ -59,10 +59,12 @@ impl Config {
             path.push_str("-mycelite-config");
             path
         };
-        Self {
+        let mut s = Self {
             path,
             state: BTreeMap::new(),
-        }
+        };
+        s.insert("endpoint", "https://us-east-1.mycelial.com");
+        s
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
