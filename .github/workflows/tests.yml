@@ -12,6 +12,7 @@ jobs:
     - uses: actions/checkout@v3
     - name: Run tests
       run: |
+        cargo test --verbose --no-default-features
         cargo test --verbose
         cargo test --release --verbose
 
@@ -22,6 +23,7 @@ jobs:
     - name: Run tests
       run: |
         brew install pkg-config
+        cargo test --verbose --no-default-features
         cargo test --verbose
         cargo test --release --verbose
 
@@ -49,5 +51,6 @@ jobs:
         "@ > $env:PKG_CONFIG_PATH\sqlite3.pc
     - name: Run tests
       run: |
-       cargo test --verbose
-       cargo test --release --verbose
+        cargo test --verbose --no-default-features
+        cargo test --verbose
+        cargo test --release --verbose
