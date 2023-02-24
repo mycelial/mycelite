@@ -7,4 +7,5 @@ members = [
     "mycelite",
     "page_parser",
     "serde_sqlite",
+    "utils",
 ]
