@@ -109,7 +109,8 @@ jobs:
         if: matrix.build == 'windows'
         run: |
           $env:ARTIFACT_NAME="${{ matrix.target }}.zip"
-          Compress-Archive -Path .\target\${{ matrix.target }}\release\mycelite.dll -DestinationPath $env:ARTIFACT_NAME
+          mv .\target\${{ matrix.target }}\release\mycelite.dll .\target\${{ matrix.target }}\release\libmycelite.dll
+          Compress-Archive -Path .\target\${{ matrix.target }}\release\libmycelite.dll -DestinationPath $env:ARTIFACT_NAME
           echo "ARTIFACT_NAME=$env:ARTIFACT_NAME" >> $env:GITHUB_ENV
 
       - name: release
