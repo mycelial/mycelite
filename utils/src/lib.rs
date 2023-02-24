@@ -1,5 +1,6 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+//! calculates diff between two sqlite pages
+pub fn get_diff(new_page: &[u8], old_page: &[u8]) ->  Vec<()> {
+    unimplemented!()
 }
 
 #[cfg(test)]
@@ -7,8 +8,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn it_not_works() {
+        get_diff(&[], &[]);
     }
 }
