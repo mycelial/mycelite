@@ -1,117 +1,71 @@
-use std::io::Cursor;
-
-use miniz_oxide::deflate::compress_to_vec;
-use miniz_oxide::inflate::decompress_to_vec;
-
-pub fn get_compressed_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
-    compress_to_vec(&get_diff(new_page, old_page), 6)
-}
-
-pub fn apply_compressed_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
-    let decompressed_diff = decompress_to_vec(&diff).unwrap();
-    apply_diff(old_page, decompressed_diff, expected_size)
-}
-
 // calculates diff between two sqlite pages
-fn get_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
-    let mut cursor = Cursor::new(Vec::new());
-    bsdiff::diff::diff(&old_page, &new_page, &mut cursor).unwrap();
-    cursor.into_inner()
-}
+pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> Vec<(usize, &'a [u8])> {
+    let mut res: Vec<(usize, &[u8])> = Vec::new();
 
-// applies a diff on top of a page to get the new page
-fn apply_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
-    let mut patched = vec![0; expected_size];
-    let mut cursor = Cursor::new(diff);
+    // TODO?: currently just assuming pages are the same length
+    let mut i: usize = 0;
+    let l = old_page.len();
 
-    bsdiff::patch::patch(&old_page, &mut cursor, &mut patched).unwrap();
-    patched
+    let mut offset = 0;
+    let mut in_change_block = false;
+
+    loop {
+        if i == l && in_change_block {
+            res.push((offset, &new_page[offset..i]));
+            in_change_block = false
+        }
+        if i >= l {
+            break;
+        }
+
+        if new_page[i] != old_page[i] {
+            if !in_change_block {
+                in_change_block = true;
+                offset = i;
+            }
+        }
+        if new_page[i] == old_page[i] {
+            if in_change_block {
+                res.push((offset, &new_page[offset..i]));
+                in_change_block = false
+            }
+        }
+
+        i += 1
+    }
+
+    res
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use quickcheck::quickcheck;
-    use rand::{distributions::Uniform, Rng};
+    use quickcheck::{quickcheck, TestResult};
 
-    fn get_random(size: usize) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
-        let range = Uniform::new(0, std::u8::MAX);
+    #[test]
+    fn it_works() {
+        get_diff(&[], &[]);
+    }
 
-        let vals: Vec<u8> = (0..size).map(|_| rng.sample(&range)).collect();
-        vals
+    #[test]
+    fn test_it_works_with_data() {
+        let old_page: &[u8] = &[0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3];
+        let new_page: &[u8] = &[0, 1, 2, 3, 1, 1, 1, 1, 2, 3, 1, 3];
+        let results = get_diff(new_page, old_page);
+        let expected: Vec<(usize, &[u8])> = vec![(1, &[1, 2, 3]), (6, &[1, 1]), (10, &[1])];
+        assert_eq!(expected, results);
     }
 
     quickcheck! {
-        fn prop_get_and_apply_diff(p1: Vec<u8>, p2: Vec<u8>) -> bool {
-            let s = p1.len();
-            let compressed_diff = get_compressed_diff(&p1, &p2);
-            let applied = apply_compressed_diff(&p2, compressed_diff, s);
-            p1 == applied
+        fn prop_get_diff(p1: Vec<u8>, p2: Vec<u8>) -> TestResult {
+            if p1.len() != p2.len() {
+                return TestResult::discard();
+            }
+            let diff = get_diff(&p1, &p2);
+            let diff_exists = diff.len() > 0;
+            let inputs_equal = p1 == p2;
+            return TestResult::from_bool(inputs_equal != diff_exists);
         }
-    }
-
-    #[test]
-    fn test_diff() {
-        let one: &[u8] = &[1, 2, 3, 4, 5, 6, 7];
-        let two: &[u8] = &[1, 2, 4, 4, 7, 6, 7];
-
-        let diff = get_diff(two, one);
-        let expected: Vec<u8> = vec![
-            7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 128, 0, 0, 1, 0,
-            2, 0, 0,
-        ];
-        assert_eq!(diff, expected);
-        let compressed_diff = get_compressed_diff(two, one);
-        let expected_compressed_diff =
-            vec![99, 103, 64, 5, 76, 16, 170, 129, 129, 129, 17, 196, 6, 0];
-        assert_eq!(compressed_diff, expected_compressed_diff);
-    }
-
-    #[test]
-    fn test_that_applying_diff_results_in_original() {
-        let original_page = get_random(4096);
-        let new_page = get_random(4096);
-
-        let compressed_diff = get_compressed_diff(&new_page, &original_page);
-        assert_ne!(original_page, compressed_diff);
-        assert_ne!(new_page, compressed_diff);
-
-        let applied = apply_compressed_diff(&original_page, compressed_diff, new_page.len());
-        assert_eq!(new_page, applied)
-    }
-
-    #[test]
-    fn test_compressed_diff_is_smaller_with_100_values_changed() {
-        let original_page = get_random(4096);
-        let mut new_page = original_page.clone();
-        for i in 1..100 {
-            new_page[500 + i] = 100 + i as u8;
-        }
-
-        let compressed_diff = get_compressed_diff(&new_page, &original_page);
-        assert!(original_page.len() > compressed_diff.len())
-    }
-
-    #[test]
-    fn test_compressed_diff_is_smaller_with_1000_values_changed() {
-        let original_page = get_random(4096);
-        let mut new_page = original_page.clone();
-        for i in 1..1000 {
-            new_page[i + 2 * i] = 100;
-        }
-
-        let compressed_diff = get_compressed_diff(&new_page, &original_page);
-        assert!(original_page.len() > compressed_diff.len())
-    }
-
-    #[test]
-    fn test_compressed_diff_is_big_with_almost_all_values_changed() {
-        let original_page = get_random(4096);
-        let new_page = get_random(4096);
-
-        let compressed_diff = get_compressed_diff(&new_page, &original_page);
-        // compressed diff is larger than the new page
-        assert!(original_page.len() < compressed_diff.len())
     }
 }
