@@ -1029,6 +1029,7 @@ version = "0.1.0"
 dependencies = [
  "bsdiff",
  "miniz_oxide 0.7.1",
+ "quickcheck",
  "rand",
 ]
 

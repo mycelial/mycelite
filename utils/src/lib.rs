@@ -12,8 +12,8 @@ pub fn get_compressed_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
     compress(get_diff(new_page, old_page))
 }
 
-pub fn apply_compressed_diff(old_page: &[u8], diff: Vec<u8>) -> Vec<u8> {
-    apply_diff(old_page, decompress(&diff))
+pub fn apply_compressed_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
+    apply_diff(old_page, decompress(&diff), expected_size)
 }
 
 // calculates diff between two sqlite pages
@@ -24,8 +24,8 @@ pub fn get_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
 }
 
 // applies a diff on top of a page to get the new page
-pub fn apply_diff(old_page: &[u8], diff: Vec<u8>) -> Vec<u8> {
-    let mut patched = vec![0; old_page.len()];
+pub fn apply_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
+    let mut patched = vec![0; expected_size];
     let mut cursor = Cursor::new(diff);
 
     bsdiff::patch::patch(&old_page, &mut cursor, &mut patched).unwrap();
@@ -43,6 +43,7 @@ pub fn decompress(compressed: &Vec<u8>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck::quickcheck;
     use rand::{distributions::Uniform, Rng};
 
     fn get_random(size: usize) -> Vec<u8> {
@@ -51,6 +52,19 @@ mod tests {
 
         let vals: Vec<u8> = (0..size).map(|_| rng.sample(&range)).collect();
         vals
+    }
+
+    quickcheck! {
+        fn prop_get_and_apply_diff(p1: Vec<u8>, p2: Vec<u8>) -> bool {
+            let s = p1.len();
+            println!("p1: {:?}", p1);
+            println!("p2: {:?}", p2);
+            let compressed_diff = get_compressed_diff(&p1, &p2);
+            println!("compressed: {:?}", compressed_diff);
+            let applied = apply_compressed_diff(&p2, compressed_diff, s);
+            println!("applied: {:?}", applied);
+            p1 == applied
+        }
     }
 
     #[test]
@@ -79,7 +93,7 @@ mod tests {
         assert_ne!(original_page, compressed_diff);
         assert_ne!(new_page, compressed_diff);
 
-        let applied = apply_compressed_diff(&original_page, compressed_diff);
+        let applied = apply_compressed_diff(&original_page, compressed_diff, new_page.len());
         assert_eq!(new_page, applied)
     }
 
