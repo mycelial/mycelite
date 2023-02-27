@@ -1,43 +1,31 @@
 use std::io::Cursor;
 
-// TODO: There's a comment in the docs indicating this shouldn't be used in production.
-// "These simple functions will do everything in one go and are thus not recommended for use cases
-// outside of prototyping/testing as real world data can have any size and thus result in very large
-// memory allocations for the output Vector. Consider using miniz_oxide via flate2 which makes it easy
-// to do streaming (de)compression or the low-level streaming functions instead."
 use miniz_oxide::deflate::compress_to_vec;
 use miniz_oxide::inflate::decompress_to_vec;
 
 pub fn get_compressed_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
-    compress(get_diff(new_page, old_page))
+    compress_to_vec(&get_diff(new_page, old_page), 6)
 }
 
 pub fn apply_compressed_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
-    apply_diff(old_page, decompress(&diff), expected_size)
+    let decompressed_diff = decompress_to_vec(&diff).unwrap();
+    apply_diff(old_page, decompressed_diff, expected_size)
 }
 
 // calculates diff between two sqlite pages
-pub fn get_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
+fn get_diff(new_page: &[u8], old_page: &[u8]) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     bsdiff::diff::diff(&old_page, &new_page, &mut cursor).unwrap();
     cursor.into_inner()
 }
 
 // applies a diff on top of a page to get the new page
-pub fn apply_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
+fn apply_diff(old_page: &[u8], diff: Vec<u8>, expected_size: usize) -> Vec<u8> {
     let mut patched = vec![0; expected_size];
     let mut cursor = Cursor::new(diff);
 
     bsdiff::patch::patch(&old_page, &mut cursor, &mut patched).unwrap();
     patched
-}
-
-pub fn compress(diff: Vec<u8>) -> Vec<u8> {
-    compress_to_vec(&diff, 6)
-}
-
-pub fn decompress(compressed: &Vec<u8>) -> Vec<u8> {
-    decompress_to_vec(compressed).unwrap()
 }
 
 #[cfg(test)]
@@ -57,12 +45,8 @@ mod tests {
     quickcheck! {
         fn prop_get_and_apply_diff(p1: Vec<u8>, p2: Vec<u8>) -> bool {
             let s = p1.len();
-            println!("p1: {:?}", p1);
-            println!("p2: {:?}", p2);
             let compressed_diff = get_compressed_diff(&p1, &p2);
-            println!("compressed: {:?}", compressed_diff);
             let applied = apply_compressed_diff(&p2, compressed_diff, s);
-            println!("applied: {:?}", applied);
             p1 == applied
         }
     }
