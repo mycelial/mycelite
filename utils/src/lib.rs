@@ -49,7 +49,7 @@ mod tests {
     }
 
     #[test]
-    fn test_it_works_with_data() {
+    fn test_it_works_with_actual_data() {
         let old_page: &[u8] = &[0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3];
         let new_page: &[u8] = &[0, 1, 2, 3, 1, 1, 1, 1, 2, 3, 1, 3];
         let results = get_diff(new_page, old_page);
@@ -57,15 +57,33 @@ mod tests {
         assert_eq!(expected, results);
     }
 
+    #[test]
+    fn test_it_works_with_bytes_at_end_changed() {
+        let old_page: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let new_page: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let results = get_diff(new_page, old_page);
+        let expected: Vec<(usize, &[u8])> = vec![(11, &[1])];
+        assert_eq!(expected, results);
+    }
+
     quickcheck! {
-        fn prop_get_diff(p1: Vec<u8>, p2: Vec<u8>) -> TestResult {
-            if p1.len() != p2.len() {
+        fn prop_get_diff(new: Vec<u8>, old: Vec<u8>) -> TestResult {
+            if new.len() != old.len() {
                 return TestResult::discard();
             }
-            let diff = get_diff(&p1, &p2);
+            let diff = get_diff(&new, &old);
             let diff_exists = diff.len() > 0;
-            let inputs_equal = p1 == p2;
-            return TestResult::from_bool(inputs_equal != diff_exists);
+            let inputs_equal = new == old;
+            if inputs_equal == diff_exists {
+                return TestResult::from_bool(false);
+            }
+            let mut brand_new = old.clone();
+            for (offset, bytes) in diff {
+                for (i, val) in bytes.iter().enumerate() {
+                    brand_new[offset + i] = *val;
+                }
+            }
+            return TestResult::from_bool(new == brand_new);
         }
     }
 }
