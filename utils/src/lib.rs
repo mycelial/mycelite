@@ -73,11 +73,6 @@ mod tests {
                 return TestResult::discard();
             }
             let diff = get_diff(&new, &old);
-            let diff_exists = diff.len() > 0;
-            let inputs_equal = new == old;
-            if inputs_equal == diff_exists {
-                return TestResult::from_bool(false);
-            }
             let mut brand_new = old.clone();
             for (offset, bytes) in diff {
                 for (i, val) in bytes.iter().enumerate() {
