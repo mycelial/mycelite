@@ -23,6 +23,9 @@ pub fn get_diff<'a>(
                     if i != 0 && i < o && new_page[i - 1] != old_page[i - 1] {
                         return Some((offset, &new_page[offset..i]));
                     }
+                    if i == (l - 1) {
+                        return Some((offset, &new_page[offset..i + 1]));
+                    }
                     None
                 }
                 false => {
@@ -77,10 +80,10 @@ mod tests {
     #[test]
     fn test_it_works_with_empty_old_page() {
         let old_page: &[u8] = &[];
-        let new_page: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let new_page: &[u8] = &[1, 0];
 
         let results = get_diff(new_page, old_page);
-        let expected: Vec<(usize, &[u8])> = vec![(0, &[ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 ])];
+        let expected: Vec<(usize, &[u8])> = vec![(0, &[1, 0])];
 
         assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
     }
