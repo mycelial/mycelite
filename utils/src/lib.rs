@@ -1,6 +1,4 @@
-// calculates diff between two sqlite pages
-pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> Vec<(usize, &'a [u8])> {
-    // TODO?: currently just assuming pages are the same length
+pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> impl Iterator<Item=(usize, &'a [u8])> + 'a {
     let l = old_page.len();
 
     let mut offset = 0;
@@ -8,7 +6,7 @@ pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> Vec<(usize, &'a [
     old_page
         .into_iter()
         .enumerate()
-        .filter_map(|(i, old_val)| {
+        .filter_map(move |(i, old_val)| {
             let new_val = new_page[i];
             match old_val == &new_val {
                 true => {
@@ -35,7 +33,6 @@ pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> Vec<(usize, &'a [
                 }
             }
         })
-        .collect()
 }
 
 #[cfg(test)]
