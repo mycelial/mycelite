@@ -1,4 +1,7 @@
-pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> impl Iterator<Item=(usize, &'a [u8])> + 'a {
+pub fn get_diff<'a>(
+    new_page: &'a [u8],
+    old_page: &'a [u8],
+) -> impl Iterator<Item = (usize, &'a [u8])> + 'a {
     let l = old_page.len();
 
     let mut offset = 0;
@@ -37,13 +40,31 @@ pub fn get_diff<'a>(new_page: &'a [u8], old_page: &'a [u8]) -> impl Iterator<Ite
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use quickcheck::{quickcheck, TestResult};
 
+    fn iterator_matches_expected<'a>(
+        expected: Vec<(usize, &[u8])>,
+        mut iterator: impl Iterator<Item = (usize, &'a [u8])>,
+    ) -> bool {
+        let mut i = 0;
+        while let Some(result) = iterator.next() {
+            if expected[i] != result {
+                return false;
+            }
+            i += 1
+        }
+        if expected.len() != i {
+            return false;
+        }
+        true
+    }
+
     #[test]
     fn it_works() {
-        get_diff(&[], &[]);
+        let expected: Vec<(usize, &[u8])> = vec![];
+        let results = get_diff(&[], &[]);
+        assert!(iterator_matches_expected(expected, results));
     }
 
     #[test]
@@ -52,16 +73,18 @@ mod tests {
         let new_page: &[u8] = &[0, 1, 2, 3, 1, 1, 1, 1, 2, 3, 1, 3];
         let results = get_diff(new_page, old_page);
         let expected: Vec<(usize, &[u8])> = vec![(1, &[1, 2, 3]), (6, &[1, 1]), (10, &[1])];
-        assert_eq!(expected, results);
+        assert!(iterator_matches_expected(expected, results));
     }
 
     #[test]
     fn test_it_works_with_values_at_end_changed() {
         let old_page: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let new_page: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
         let results = get_diff(new_page, old_page);
         let expected: Vec<(usize, &[u8])> = vec![(11, &[1])];
-        assert_eq!(expected, results);
+
+        assert!(iterator_matches_expected(expected, results));
     }
 
     quickcheck! {
