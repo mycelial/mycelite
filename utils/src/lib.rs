@@ -1,5 +1,7 @@
 use std::iter;
 
+const HEADER_SIZE: usize = 16;
+
 pub fn get_diff<'a>(
     new_page: &'a [u8],
     old_page: &'a [u8],
@@ -8,6 +10,7 @@ pub fn get_diff<'a>(
     let o = old_page.len();
 
     let mut offset = 0;
+    let mut offset_end = 0;
 
     old_page
         .into_iter()
@@ -15,30 +18,35 @@ pub fn get_diff<'a>(
         .zip(new_page)
         .enumerate()
         .filter_map(move |(i, values)| {
+            // special case for when old page is empty
+            if o == 0 && i == (l - 1) {
+                return Some((0, &new_page[0..i + 1]));
+            }
             if values.0 == values.1 {
                 // if this value matches and the previous one did not, we know we just passed the end of one or more
-                // values that didn't match. In that case, we return the offset as well as the values to be changed, which
-                // are the ones between `offset` and `i`, as results.
+                // values that didn't match. In that case, we note the position by setting `offset_end` to `i`
                 if i != 0 && i < o && new_page[i - 1] != old_page[i - 1] {
-                    return Some((offset, &new_page[offset..i]));
+                    offset_end = i;
                 }
-                if i > o && i == (l - 1) {
-                    return Some((offset, &new_page[offset..i + 1]));
+                // if we're HEADER_SIZE past the last section that needs changing, or at the end, we need to return the last blob of changes
+                if offset_end + HEADER_SIZE == i || i == (l - 1) {
+                    return Some((offset, &new_page[offset..offset_end]));
                 }
-                None
             } else {
                 // if this value doesn't match but the previous one did, we know we're at the beginning of one or more
                 // values that don't match. we note the position by updating `offset` to `i`.
                 if i == 0 || (i < o && new_page[i - 1] == old_page[i - 1]) {
-                    offset = i;
+                    if offset_end == 0 || offset_end + HEADER_SIZE < i {
+                        offset = i;
+                    }
                 }
                 // normally, we add the values that need to be changed as soon as we see a matching value again, but
                 // when we're on the last value that doesn't match, we need to have special handing to include it.
                 if i == (l - 1) {
                     return Some((offset, &new_page[offset..i + 1]));
                 }
-                None
             }
+            None
         })
 }
 
@@ -59,7 +67,36 @@ mod tests {
         let old_page: &[u8] = &[0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3];
         let new_page: &[u8] = &[0, 1, 2, 3, 1, 1, 1, 1, 2, 3, 1, 3];
         let results = get_diff(new_page, old_page);
-        let expected: Vec<(usize, &[u8])> = vec![(1, &[1, 2, 3]), (6, &[1, 1]), (10, &[1])];
+        let expected: Vec<(usize, &[u8])> = vec![(1, &[1, 2, 3, 1, 1, 1, 1, 2, 3, 1])];
+        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
+    }
+
+    #[test]
+    fn test_it_works_with_small_gap_between_changed_values() {
+        let old_page: &[u8] = &[
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+        ];
+        let new_page: &[u8] = &[
+            0, 1, 20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 190, 20
+        ];
+        let results = get_diff(new_page, old_page);
+        let expected: Vec<(usize, &[u8])> =
+            vec![(2, &[20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 190])];
+
+        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
+    }
+    #[test]
+    fn test_it_works_with_big_gap_between_changed_values() {
+        let old_page: &[u8] = &[
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+        ];
+        let new_page: &[u8] = &[
+            0, 1, 20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 200
+        ];
+
+        let results = get_diff(new_page, old_page);
+        let expected: Vec<(usize, &[u8])> = vec![(2, &[20]), (20, &[200])];
+
         assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
     }
 
