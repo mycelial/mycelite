@@ -15,32 +15,29 @@ pub fn get_diff<'a>(
         .zip(new_page)
         .enumerate()
         .filter_map(move |(i, values)| {
-            match values.0 == values.1 {
-                true => {
-                    // if this value matches and the previous one did not, we know we just passed the end of one or more
-                    // values that didn't match. In that case, we return the offset as well as the values to be changed, which
-                    // are the ones between `offset` and `i`, as results.
-                    if i != 0 && i < o && new_page[i - 1] != old_page[i - 1] {
-                        return Some((offset, &new_page[offset..i]));
-                    }
-                    if i == (l - 1) {
-                        return Some((offset, &new_page[offset..i + 1]));
-                    }
-                    None
+            if values.0 == values.1 {
+                // if this value matches and the previous one did not, we know we just passed the end of one or more
+                // values that didn't match. In that case, we return the offset as well as the values to be changed, which
+                // are the ones between `offset` and `i`, as results.
+                if i != 0 && i < o && new_page[i - 1] != old_page[i - 1] {
+                    return Some((offset, &new_page[offset..i]));
                 }
-                false => {
-                    // if this value doesn't match but the previous one did, we know we're at the beginning of one or more
-                    // values that don't match. we note the position by updating `offset` to `i`.
-                    if i == 0 || (i < o && new_page[i - 1] == old_page[i - 1]) {
-                        offset = i;
-                    }
-                    // normally, we add the values that need to be changed as soon as we see a matching value again, but
-                    // when we're on the last value that doesn't match, we need to have special handing to include it.
-                    if i == (l - 1) {
-                        return Some((offset, &new_page[offset..i + 1]));
-                    }
-                    None
+                if i > o && i == (l - 1) {
+                    return Some((offset, &new_page[offset..i + 1]));
                 }
+                None
+            } else {
+                // if this value doesn't match but the previous one did, we know we're at the beginning of one or more
+                // values that don't match. we note the position by updating `offset` to `i`.
+                if i == 0 || (i < o && new_page[i - 1] == old_page[i - 1]) {
+                    offset = i;
+                }
+                // normally, we add the values that need to be changed as soon as we see a matching value again, but
+                // when we're on the last value that doesn't match, we need to have special handing to include it.
+                if i == (l - 1) {
+                    return Some((offset, &new_page[offset..i + 1]));
+                }
+                None
             }
         })
 }
