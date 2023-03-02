@@ -246,7 +246,9 @@ impl AsyncWriteJournalStream {
             match de::from_reader::<Protocol, _>(&mut self.read_receiver) {
                 Ok(Protocol::SnapshotHeader(snapshot_header)) => {
                     self.journal.commit().map_err(to_err)?;
-                    self.journal.add_snapshot(&snapshot_header).map_err(to_err)?;
+                    self.journal
+                        .add_snapshot(&snapshot_header)
+                        .map_err(to_err)?;
                 }
                 Ok(Protocol::PageHeader(page_header)) => {
                     let mut page = vec![0; page_header.page_size as usize];

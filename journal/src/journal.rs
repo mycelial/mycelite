@@ -125,7 +125,7 @@ impl<F: Seek, W: Seek, R: Seek> Seek for Fd<F, W, R> {
 impl Journal<fs::File> {
     /// Create new journal
     pub fn create<P: AsRef<path::Path>>(p: P) -> Result<Self> {
-        let mut fd = fs::OpenOptions::new()
+        let fd = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)

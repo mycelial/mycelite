@@ -13,7 +13,7 @@ pub fn get_diff<'a>(
     let mut offset_end = 0;
 
     old_page
-        .into_iter()
+        .iter()
         .chain(iter::repeat::<&u8>(&0))
         .zip(new_page)
         .enumerate()
@@ -35,10 +35,8 @@ pub fn get_diff<'a>(
             } else {
                 // if this value doesn't match but the previous one did, we know we're at the beginning of one or more
                 // values that don't match. we note the position by updating `offset` to `i`.
-                if i == 0 || (i < o && new_page[i - 1] == old_page[i - 1]) {
-                    if offset_end == 0 || offset_end + HEADER_SIZE < i {
-                        offset = i;
-                    }
+                if (i == 0 || (i < o && new_page[i - 1] == old_page[i - 1])) && (offset_end == 0 || offset_end + HEADER_SIZE < i) {
+                    offset = i;
                 }
                 // normally, we add the values that need to be changed as soon as we see a matching value again, but
                 // when we're on the last value that doesn't match, we need to have special handing to include it.
@@ -74,24 +72,28 @@ mod tests {
     #[test]
     fn test_it_works_with_small_gap_between_changed_values() {
         let old_page: &[u8] = &[
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ];
         let new_page: &[u8] = &[
-            0, 1, 20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 190, 20
+            0, 1, 20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 190, 20,
         ];
         let results = get_diff(new_page, old_page);
-        let expected: Vec<(usize, &[u8])> =
-            vec![(2, &[20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 190])];
+        let expected: Vec<(usize, &[u8])> = vec![(
+            2,
+            &[
+                20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 190,
+            ],
+        )];
 
         assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
     }
     #[test]
     fn test_it_works_with_big_gap_between_changed_values() {
         let old_page: &[u8] = &[
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ];
         let new_page: &[u8] = &[
-            0, 1, 20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 200
+            0, 1, 20, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 200,
         ];
 
         let results = get_diff(new_page, old_page);
@@ -134,7 +136,7 @@ mod tests {
                     brand_new[offset + i] = *val;
                 }
             }
-            return TestResult::from_bool(new == brand_new);
+            TestResult::from_bool(new == brand_new)
         }
 
         fn prop_get_diff_when_old_page_not_exists(new: Vec<u8>) -> TestResult {
@@ -146,7 +148,7 @@ mod tests {
                     brand_new[offset + i] = *val;
                 }
             }
-            return TestResult::from_bool(new == brand_new);
+            TestResult::from_bool(new == brand_new)
         }
     }
 }
