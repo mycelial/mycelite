@@ -29,7 +29,7 @@ pub fn get_diff<'a>(
                     offset_end = i;
                 }
                 // if we're HEADER_SIZE past the last section that needs changing, or at the end, we need to return the last blob of changes
-                if offset_end + HEADER_SIZE == i || i == (l - 1) {
+                if (offset_end + HEADER_SIZE == i && offset != offset_end) || (i == (l - 1) && offset_end + HEADER_SIZE > i) {
                     return Some((offset, &new_page[offset..offset_end]));
                 }
             } else {
