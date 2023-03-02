@@ -379,6 +379,21 @@ unsafe extern "C" fn mvfs_io_write(
         }
     }
     let result = file.journal.as_mut().map(|journal| {
+        let mut page = vec![0_u8; amt as usize];
+        let ptr = page.as_mut_ptr() as *mut c_void;
+        match MclVFSIO.xRead.unwrap()(pfile, ptr, amt, offset) {
+            // page was fully written to buffer
+            ffi::SQLITE_OK => {
+                println!("page was fully written to buffer");
+                println!("{offset}: {page:?}");
+            },
+            ffi::SQLITE_IOERR_SHORT_READ => {
+                println!("page doesn't exist")
+            },
+            other => {
+                println!("unexpected result: {other:?}")
+            }
+        }
         journal.new_page(
             offset as u64,
             std::slice::from_raw_parts(buf as *const u8, amt as usize),
