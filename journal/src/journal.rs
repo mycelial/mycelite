@@ -125,7 +125,7 @@ impl<F: Seek, W: Seek, R: Seek> Seek for Fd<F, W, R> {
 impl Journal<fs::File> {
     /// Create new journal
     pub fn create<P: AsRef<path::Path>>(p: P) -> Result<Self> {
-        let fd = fs::OpenOptions::new()
+        let mut fd = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
@@ -137,21 +137,25 @@ impl Journal<fs::File> {
     pub fn try_from<P: AsRef<path::Path>>(p: P) -> Result<Self> {
         let mut fd = fs::OpenOptions::new().write(true).read(true).open(p)?;
         let header = Self::read_header(&mut fd)?;
-        Self::new(header, fd, None)
+        Ok(Self::from(header, fd, None))
     }
 }
 
 impl<F: Read + Write + Seek> Journal<F> {
-    /// initiate journal & force header write
+    /// Instantiate journal & force header write
     pub fn new(header: Header, mut fd: F, page_count: Option<u32>) -> Result<Self> {
         Self::write_header(&mut fd, &header)?;
-        let fd = Fd::Raw(fd);
-        Ok(Self {
+        Ok(Self::from(header, fd, page_count))
+    }
+
+    /// Instantiate journal
+    pub fn from(header: Header, fd: F, page_count: Option<u32>) -> Self {
+        Self {
             header,
-            fd,
+            fd: Fd::Raw(fd),
             page_count,
             buffer_sz: DEFAULT_BUFFER_SIZE,
-        })
+        }
     }
 
     /// Set buffer size
