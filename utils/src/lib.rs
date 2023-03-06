@@ -13,7 +13,7 @@ pub fn get_diff<'a>(
     let mut offset_end = 0;
 
     old_page
-        .into_iter()
+        .iter()
         .chain(iter::repeat::<&u8>(&0))
         .zip(new_page)
         .enumerate()
@@ -159,7 +159,7 @@ mod tests {
                     brand_new[offset + i] = *val;
                 }
             }
-            return TestResult::from_bool(new == brand_new);
+            TestResult::from_bool(new == brand_new)
         }
 
         fn prop_get_diff_when_old_page_not_exists(new: Vec<u8>) -> TestResult {
@@ -171,7 +171,7 @@ mod tests {
                     brand_new[offset + i] = *val;
                 }
             }
-            return TestResult::from_bool(new == brand_new);
+            TestResult::from_bool(new == brand_new)
         }
     }
 }

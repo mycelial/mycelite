@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-pub struct Replicator {
-}
+pub struct Replicator {}
 
 impl Replicator {
     pub fn new<P: AsRef<Path>>(
@@ -11,7 +10,7 @@ impl Replicator {
         _read_only: bool,
         _lock: Arc<Mutex<()>>,
     ) -> Self {
-        Self  {}
+        Self {}
     }
 
     pub fn spawn(self) -> ReplicatorHandle {
@@ -19,8 +18,7 @@ impl Replicator {
     }
 }
 
-pub struct ReplicatorHandle {
-}
+pub struct ReplicatorHandle {}
 
 impl ReplicatorHandle {
     pub fn new_snapshot(&self) {}
