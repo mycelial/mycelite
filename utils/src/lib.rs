@@ -18,14 +18,10 @@ pub fn get_diff<'a>(
         .zip(new_page)
         .enumerate()
         .filter_map(move |(i, values)| {
-            // special case for when old page is empty
-            if o == 0 && i == (l - 1) {
-                return Some((0, &new_page[0..i + 1]));
-            }
             if values.0 == values.1 {
                 // if this value matches and the previous one did not, we know we just passed the end of one or more
                 // values that didn't match. In that case, we note the position by setting `offset_end` to `i`
-                if i != 0 && i < o && new_page[i - 1] != old_page[i - 1] {
+                if i != 0 && ((i < o && new_page[i - 1] != old_page[i - 1]) || i >= o && new_page[i - 1] != 0) {
                     offset_end = i;
                 }
                 // if we're HEADER_SIZE past the last section that needs changing, or at the end, we need to return the last blob of changes
@@ -37,7 +33,7 @@ pub fn get_diff<'a>(
             } else {
                 // if this value doesn't match but the previous one did, we know we're at the beginning of one or more
                 // values that don't match. we note the position by updating `offset` to `i`.
-                if i == 0 || (i < o && new_page[i - 1] == old_page[i - 1]) {
+                if i == 0 || ((i < o && new_page[i - 1] == old_page[i - 1]) || i >= o && new_page[i-1] == 0) {
                     if offset_end == 0 || offset_end + HEADER_SIZE < i {
                         offset = i;
                     }
@@ -142,10 +138,10 @@ mod tests {
     #[test]
     fn test_it_works_with_empty_old_page() {
         let old_page: &[u8] = &[];
-        let new_page: &[u8] = &[1, 0];
+        let new_page: &[u8] = &[0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0];
 
         let results = get_diff(new_page, old_page);
-        let expected: Vec<(usize, &[u8])> = vec![(0, &[1, 0])];
+        let expected: Vec<(usize, &[u8])> = vec![(3, &[1, 1, 1, 0, 1])];
 
         assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
     }
