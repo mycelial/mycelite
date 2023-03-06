@@ -25,8 +25,7 @@ pub fn get_diff<'a>(
                     offset_end = i;
                 }
                 // if we're HEADER_SIZE past the last section that needs changing, or at the end, we need to return the last blob of changes
-                if (offset_end + HEADER_SIZE == i && offset != offset_end)
-                    || (i == (l - 1) && offset_end + HEADER_SIZE > i)
+                if  offset != offset_end && (offset_end + HEADER_SIZE == i || (i == (l - 1) && offset_end + HEADER_SIZE > i))
                 {
                     return Some((offset, &new_page[offset..offset_end]));
                 }
@@ -131,6 +130,17 @@ mod tests {
 
         let results = get_diff(new_page, old_page);
         let expected: Vec<(usize, &[u8])> = vec![(11, &[1])];
+
+        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
+    }
+
+    #[test]
+    fn test_it_works_with_empty_old_page_and_new_page_all_zeros() {
+        let old_page: &[u8] = &[];
+        let new_page: &[u8] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        let results = get_diff(new_page, old_page);
+        let expected: Vec<(usize, &[u8])> = vec![];
 
         assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
     }
