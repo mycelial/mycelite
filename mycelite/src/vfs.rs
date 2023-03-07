@@ -148,9 +148,13 @@ impl MclVFSFile {
         for res in iter {
             let (offset, page) = res?;
             let page = page.as_slice();
-            journal.new_blob(offset, page)?;
+            // it's ok to call snapshot multiple times, if it's already started, it's noop
+            journal.new_snapshot(page.len() as u32)?;
+            for (diff_offset, blob) in utils::get_diff(page, &[]) {
+                journal.new_blob(offset + diff_offset as u64, blob)?;
+            }
         }
-        journal.commit().map_err(Into::into)
+        Ok(journal.commit()?)
     }
 
     fn setup_journal(
@@ -390,7 +394,7 @@ unsafe extern "C" fn mvfs_io_write(
                     ffi::SQLITE_IOERR_SHORT_READ => utils::get_diff(new_page, &[]),
                     _other => return ffi::SQLITE_ERROR,
                 };
-            iter.try_for_each(|(mut diff_offset, diff)| {
+            iter.try_for_each(|(diff_offset, diff)| {
                 let diff_offset = diff_offset as i64 + offset;
                 journal
                     .new_snapshot(amt as u32)
@@ -422,7 +426,6 @@ unsafe extern "C" fn mvfs_io_sync(pfile: *mut ffi::sqlite3_file, flags: c_int) -
     if let Some(replicator) = file.replicator.as_mut() {
         replicator.new_snapshot();
     }
-    println!("xsync");
     (*file.real.pMethods).xSync.unwrap()(&mut file.real, flags)
 }
 
