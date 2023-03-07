@@ -62,8 +62,7 @@ mod tests {
     fn it_works() {
         let expected: Vec<(usize, &[u8])> = vec![];
         let results = get_diff(&[], &[]);
-        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
-    }
+        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected); }
 
     #[test]
     fn test_it_works_with_actual_data() {

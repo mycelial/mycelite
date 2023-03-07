@@ -19,12 +19,12 @@ fn test_journal_not_exists() {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct TestPage {
+struct TestBlob {
     offset: u64,
     data: Vec<u8>,
 }
 
-impl Arbitrary for TestPage {
+impl Arbitrary for TestBlob {
     fn arbitrary(gen: &mut Gen) -> Self {
         Self {
             offset: u64::arbitrary(gen),
@@ -35,38 +35,38 @@ impl Arbitrary for TestPage {
 
 #[derive(Debug, Clone, PartialEq)]
 struct TestSnapshot {
-    pages: Vec<TestPage>,
+    blobs: Vec<TestBlob>,
 }
 
 impl Arbitrary for TestSnapshot {
     fn arbitrary(gen: &mut Gen) -> Self {
-        // limit min/max pages per snapshot
-        let page_count = 1 + usize::arbitrary(gen) % 49;
-        let pages = (0..page_count)
+        // limit min/max blob per snapshot
+        let blob_count = 1 + usize::arbitrary(gen) % 49;
+        let blobs = (0..blob_count)
             .enumerate()
             .fold(vec![], |mut acc, (pos, _)| {
-                let mut page = TestPage::arbitrary(gen);
+                let mut blob = TestBlob::arbitrary(gen);
                 // *edge case*
-                // quickcheck is able to quickly find a way to insert 'last page' as a first page of snapshot
-                // last page is a page where all values are set to 0 and technically it's not possible
-                // to insert such page from sqlite calls
-                // for now we just override such scenario, but pages with zero sizes are still part of
-                // the test case, even though empty page as a concept doesn't make sense.
-                if pos == 0 && page.data.is_empty() {
-                    page.data = vec![0];
+                // quickcheck is able to quickly find a way to insert 'last blob' as a first blob of snapshot
+                // last blob is a blob where all values are set to 0 and technically it's not possible
+                // to insert such blob from sqlite calls
+                // for now we just override such scenario, but blobs with zero sizes are still part of
+                // the test case, even though empty blob as a concept doesn't make sense.
+                if pos == 0 && blob.data.is_empty() {
+                    blob.data = vec![0];
                 }
-                acc.push(page);
+                acc.push(blob);
                 acc
             });
-        TestSnapshot { pages }
+        TestSnapshot { blobs }
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         Box::new(
-            self.pages
+            self.blobs
                 .shrink()
-                .filter(|pages| !pages.is_empty()) // snapshot with no pages is not valid input
-                .map(|pages| TestSnapshot { pages }),
+                .filter(|blobs| !blobs.is_empty()) // snapshot with no blobs is not valid input
+                .map(|blobs| TestSnapshot { blobs }),
         )
     }
 }
@@ -76,8 +76,9 @@ fn test_journal_snapshotting() {
     fn check(input: Vec<TestSnapshot>) {
         let mut journal = Journal::new(Header::default(), Cursor::new(vec![]), None).unwrap();
         for snapshot in input.iter() {
-            for page in snapshot.pages.iter() {
-                journal.new_page(page.offset, page.data.as_slice()).unwrap();
+            for blob in snapshot.blobs.iter() {
+                journal.new_snapshot(0).unwrap();
+                journal.new_blob(blob.offset, blob.data.as_slice()).unwrap();
             }
             journal.commit().unwrap();
         }
@@ -87,14 +88,14 @@ fn test_journal_snapshotting() {
             .map(Result::unwrap)
             .fold(
                 (vec![], None),
-                |(mut acc, mut snapshot_id), (snapshot_h, page_h, page)| {
+                |(mut acc, mut snapshot_id), (snapshot_h, blob_h, blob)| {
                     if snapshot_id != Some(snapshot_h.id) {
                         snapshot_id = Some(snapshot_h.id);
-                        acc.push(TestSnapshot { pages: vec![] });
+                        acc.push(TestSnapshot { blobs: vec![] });
                     };
-                    acc.last_mut().unwrap().pages.push(TestPage {
-                        offset: page_h.offset,
-                        data: page,
+                    acc.last_mut().unwrap().blobs.push(TestBlob {
+                        offset: blob_h.offset,
+                        data: blob,
                     });
                     (acc, snapshot_id)
                 },
@@ -137,12 +138,13 @@ impl Arbitrary for XorShift {
 fn test_journal_stream() {
     fn check(input: Vec<TestSnapshot>, mut prng: XorShift) -> TestResult {
         let mut journal = Journal::new(Header::default(), Cursor::new(vec![]), None).unwrap();
-        let mut expected_len = 4; // end of stream
+        let mut expected_len = 12; // version + end of stream
         for snapshot in input.iter() {
             expected_len += journal::SnapshotHeader::block_size() + 4;
-            for page in snapshot.pages.iter() {
-                expected_len += journal::PageHeader::block_size() + 4 + page.data.len();
-                journal.new_page(page.offset, page.data.as_slice()).unwrap();
+            for blob in snapshot.blobs.iter() {
+                expected_len += journal::BlobHeader::block_size() + 4 + blob.data.len();
+                journal.new_snapshot(0).unwrap();
+                journal.new_blob(blob.offset, blob.data.as_slice()).unwrap();
             }
             journal.commit().unwrap();
         }
@@ -170,18 +172,23 @@ fn test_journal_stream() {
 
         let mut reader = Cursor::new(buf.as_slice());
         let mut expected = vec![];
+        assert_eq!(
+            serde_sqlite::from_reader::<Protocol, _>(&mut reader).unwrap(),
+            Protocol::JournalVersion(1.into())
+        );
         loop {
             match serde_sqlite::from_reader::<Protocol, _>(&mut reader) {
-                Ok(Protocol::SnapshotHeader(_)) => expected.push(TestSnapshot { pages: vec![] }),
-                Ok(Protocol::PageHeader(p)) => {
-                    let mut buf = vec![0; p.page_size as usize];
+                Ok(Protocol::SnapshotHeader(_)) => expected.push(TestSnapshot { blobs: vec![] }),
+                Ok(Protocol::BlobHeader(p)) => {
+                    let mut buf = vec![0; p.blob_size as usize];
                     reader.read_exact(buf.as_mut_slice()).unwrap();
-                    expected.last_mut().unwrap().pages.push(TestPage {
+                    expected.last_mut().unwrap().blobs.push(TestBlob {
                         offset: p.offset,
                         data: buf,
                     });
                 }
                 Ok(Protocol::EndOfStream(_)) => break,
+                Ok(msg) => panic!("unexpected {msg:?}"),
                 Err(e) => return TestResult::error(format!("unexpected error: {e}")),
             }
         }
@@ -197,22 +204,23 @@ fn test_journal_stream_with_offset() {
         // init journal
         let mut journal = Journal::new(Header::default(), Cursor::new(vec![]), None).unwrap();
         for snapshot in input.iter() {
-            for page in snapshot.pages.iter() {
-                journal.new_page(page.offset, page.data.as_slice()).unwrap();
+            for blob in snapshot.blobs.iter() {
+                journal.new_snapshot(0).unwrap();
+                journal.new_blob(blob.offset, blob.data.as_slice()).unwrap();
             }
             journal.commit().unwrap();
         }
 
         // count how many serialized bytes are expected
         let skip = prng.next() % input.len().max(1) as u64;
-        let mut expected_len = 4; // end of stream
+        let mut expected_len = 12; // version + end of stream
         for snapshot in input.iter().skip(skip as usize) {
             expected_len += journal::SnapshotHeader::block_size() + 4;
-            for page in snapshot.pages.iter() {
-                expected_len += journal::PageHeader::block_size() + 4 + page.data.len();
+            for blob in snapshot.blobs.iter() {
+                expected_len += journal::BlobHeader::block_size() + 4 + blob.data.len();
             }
         }
-        let mut stream: Stream<_> = Stream::from(journal.into_iter().skip_snapshots(skip));
+        let mut stream: Stream<_> = Stream::from((1, journal.into_iter().skip_snapshots(skip)));
         let mut writer = Cursor::new(vec![]);
         loop {
             let buf_size = (prng.next() % 100) as usize;
@@ -235,18 +243,24 @@ fn test_journal_stream_with_offset() {
 
         let mut reader = Cursor::new(buf.as_slice());
         let mut expected = vec![];
+
+        assert_eq!(
+            serde_sqlite::from_reader::<Protocol, _>(&mut reader).unwrap(),
+            Protocol::JournalVersion(1.into())
+        );
         loop {
             match serde_sqlite::from_reader::<Protocol, _>(&mut reader) {
-                Ok(Protocol::SnapshotHeader(_)) => expected.push(TestSnapshot { pages: vec![] }),
-                Ok(Protocol::PageHeader(p)) => {
-                    let mut buf = vec![0; p.page_size as usize];
+                Ok(Protocol::SnapshotHeader(_)) => expected.push(TestSnapshot { blobs: vec![] }),
+                Ok(Protocol::BlobHeader(p)) => {
+                    let mut buf = vec![0; p.blob_size as usize];
                     reader.read_exact(buf.as_mut_slice()).unwrap();
-                    expected.last_mut().unwrap().pages.push(TestPage {
+                    expected.last_mut().unwrap().blobs.push(TestBlob {
                         offset: p.offset,
                         data: buf,
                     });
                 }
                 Ok(Protocol::EndOfStream(_)) => break,
+                Ok(msg) => panic!("unexpected {msg:?}"),
                 Err(e) => return TestResult::error(format!("unexpected error: {e}")),
             }
         }
@@ -262,8 +276,9 @@ fn test_journal_rebuild_from_stream() {
     fn check(input: Vec<TestSnapshot>, mut prng: XorShift) {
         let mut journal = Journal::new(Header::default(), Cursor::new(vec![]), None).unwrap();
         for snapshot in input.iter() {
-            for page in snapshot.pages.iter() {
-                journal.new_page(page.offset, page.data.as_slice()).unwrap();
+            for blob in snapshot.blobs.iter() {
+                journal.new_snapshot(0).unwrap();
+                journal.new_blob(blob.offset, blob.data.as_slice()).unwrap();
             }
             journal.commit().unwrap();
         }
@@ -285,20 +300,28 @@ fn test_journal_rebuild_from_stream() {
         let mut reader = Cursor::new(buf.as_slice());
         let mut recovered_journal =
             Journal::new(Header::default(), Cursor::new(vec![]), None).unwrap();
+
+        assert_eq!(
+            serde_sqlite::from_reader::<Protocol, _>(&mut reader).unwrap(),
+            Protocol::JournalVersion(1.into())
+        );
         loop {
             match serde_sqlite::from_reader::<Protocol, _>(&mut reader) {
                 Ok(Protocol::SnapshotHeader(s)) => {
                     recovered_journal.commit().unwrap();
                     recovered_journal.add_snapshot(&s).unwrap();
                 }
-                Ok(Protocol::PageHeader(p)) => {
-                    let mut buf = vec![0; p.page_size as usize];
+                Ok(Protocol::BlobHeader(p)) => {
+                    let mut buf = vec![0; p.blob_size as usize];
                     reader.read_exact(buf.as_mut_slice()).unwrap();
-                    recovered_journal.add_page(&p, buf.as_slice()).unwrap();
+                    recovered_journal.add_blob(&p, buf.as_slice()).unwrap();
                 }
                 Ok(Protocol::EndOfStream(_)) => {
                     recovered_journal.commit().unwrap();
                     break;
+                }
+                Ok(Protocol::JournalVersion(_)) => {
+                    panic!("version header should not appear in loop")
                 }
                 Err(e) => panic!("unexpected stream error: {e}"),
             }
@@ -420,10 +443,11 @@ fn test_journal_concurrent_updates() {
         // test concurrent snapshot creation
         std::thread::scope(|s| {
             s.spawn(|| {
-                s1.iter().for_each(|page| {
+                s1.iter().for_each(|blob| {
                     let guard = lock.lock().unwrap();
+                    journal_1.new_snapshot(0).unwrap();
                     journal_1
-                        .new_page(page.len() as u64, page.as_slice())
+                        .new_blob(blob.len() as u64, blob.as_slice())
                         .unwrap();
                     journal_1.commit().unwrap();
                     drop(guard);
@@ -431,10 +455,11 @@ fn test_journal_concurrent_updates() {
                 });
             });
             s.spawn(|| {
-                s2.iter().for_each(|page| {
+                s2.iter().for_each(|blob| {
                     let guard = lock.lock().unwrap();
+                    journal_2.new_snapshot(0).unwrap();
                     journal_2
-                        .new_page(page.len() as u64, page.as_slice())
+                        .new_blob(blob.len() as u64, blob.as_slice())
                         .unwrap();
                     journal_2.commit().unwrap();
                     drop(guard);
@@ -449,7 +474,7 @@ fn test_journal_concurrent_updates() {
             .all(|(left, right)| left.unwrap() == right.unwrap()));
 
         assert_eq!(journal_1.into_iter().count(), journal_2.into_iter().count());
-        // it's matches only because we have one page per snapshot
+        // it's matches only because we have one blob per snapshot
         assert_eq!(journal_1.into_iter().count(), size);
         assert_eq!(journal_1.get_header().snapshot_counter, size as u64);
 
@@ -463,9 +488,9 @@ fn test_journal_concurrent_updates() {
             s.spawn(|| loop {
                 let mut i = iter.lock().unwrap();
                 if let Some(res) = i.next() {
-                    let (snapshot_h, page_h, page) = res.unwrap();
+                    let (snapshot_h, blob_h, blob) = res.unwrap();
                     journal_1_re.add_snapshot(&snapshot_h).unwrap();
-                    journal_1_re.add_page(&page_h, page.as_slice()).unwrap();
+                    journal_1_re.add_blob(&blob_h, blob.as_slice()).unwrap();
                     journal_1_re.commit().unwrap();
                 } else {
                     break;
@@ -476,9 +501,9 @@ fn test_journal_concurrent_updates() {
             s.spawn(|| loop {
                 let mut i = iter.lock().unwrap();
                 if let Some(res) = i.next() {
-                    let (snapshot_h, page_h, page) = res.unwrap();
+                    let (snapshot_h, blob_h, blob) = res.unwrap();
                     journal_2_re.add_snapshot(&snapshot_h).unwrap();
-                    journal_2_re.add_page(&page_h, page.as_slice()).unwrap();
+                    journal_2_re.add_blob(&blob_h, blob.as_slice()).unwrap();
                     journal_2_re.commit().unwrap();
                 } else {
                     break;

@@ -23,7 +23,7 @@ where
     /// Wrapped into Fd reader/writer/seeker
     fd: Fd<F, BufWriter<F>, BufReader<F>>,
     /// snapshot page count
-    page_count: Option<u32>,
+    blob_count: Option<u32>,
     /// Buffer size
     buffer_sz: usize,
 }
@@ -143,17 +143,17 @@ impl Journal<fs::File> {
 
 impl<F: Read + Write + Seek> Journal<F> {
     /// Instantiate journal & force header write
-    pub fn new(header: Header, mut fd: F, page_count: Option<u32>) -> Result<Self> {
+    pub fn new(header: Header, mut fd: F, blob_count: Option<u32>) -> Result<Self> {
         Self::write_header(&mut fd, &header)?;
-        Ok(Self::from(header, fd, page_count))
+        Ok(Self::from(header, fd, blob_count))
     }
 
     /// Instantiate journal
-    pub fn from(header: Header, fd: F, page_count: Option<u32>) -> Self {
+    pub fn from(header: Header, fd: F, blob_count: Option<u32>) -> Self {
         Self {
             header,
             fd: Fd::Raw(fd),
-            page_count,
+            blob_count,
             buffer_sz: DEFAULT_BUFFER_SIZE,
         }
     }
@@ -170,32 +170,33 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Initiate new snapshot
     ///
-    /// * udpate journal header to correctly setup offset
+    /// * update journal header to correctly setup offset
     /// * to initiate snapshot we seek to current end of the file (value stored in header)
     /// * switch fd to buffered mode
     /// * write snapshot header with current header counter number
-    pub fn new_snapshot(&mut self) -> Result<()> {
-        if self.page_count.is_some() {
+    pub fn new_snapshot(&mut self, page_size: u32) -> Result<()> {
+        if self.blob_count.is_some() {
             return Ok(());
         }
         self.update_header()?;
         let snapshot_header = SnapshotHeader::new(
             self.header.snapshot_counter,
             chrono::Utc::now().timestamp_micros(),
+            Some(page_size),
         );
         self.write_snapshot(&snapshot_header)
     }
 
-    /// Add new sqlite page
+    /// Add new blob
     ///
     /// Automatically starts new snapshot if there is none
-    pub fn new_page(&mut self, offset: u64, page: &[u8]) -> Result<()> {
-        if !self.snapshot_started() {
-            self.new_snapshot()?;
+    pub fn new_blob(&mut self, offset: u64, page: &[u8]) -> Result<()> {
+        let blob_num = match self.blob_count {
+            Some(c) => c,
+            None => return Err(Error::SnapshotNotStarted),
         };
-        let page_num = self.page_count.unwrap();
-        let page_header = PageHeader::new(offset, page_num, page.len() as u32);
-        self.add_page(&page_header, page)
+        let blob_header = BlobHeader::new(offset, blob_num, page.len() as u32);
+        self.add_blob(&blob_header, page)
     }
 
     /// Add existing snapshot
@@ -219,24 +220,24 @@ impl<F: Read + Write + Seek> Journal<F> {
         self.fd.seek(SeekFrom::Start(self.header.eof))?;
         self.fd.as_writer(self.buffer_sz);
         self.fd.write_all(&to_bytes(snapshot_header)?)?;
-        self.page_count = Some(0);
+        self.blob_count = Some(0);
         Ok(())
     }
 
-    /// Add page
-    pub fn add_page(&mut self, page_header: &PageHeader, page: &[u8]) -> Result<()> {
-        if Some(page_header.page_num) != self.page_count {
-            return Err(Error::OutOfOrderPage {
-                page_num: page_header.page_num,
-                page_count: self.page_count,
+    /// Add blob
+    pub fn add_blob(&mut self, blob_header: &BlobHeader, blob: &[u8]) -> Result<()> {
+        if Some(blob_header.blob_num) != self.blob_count {
+            return Err(Error::OutOfOrderBlob {
+                blob_num: blob_header.blob_num,
+                blob_count: self.blob_count,
             });
         }
-        self.page_count.as_mut().map(|x| {
+        self.blob_count.as_mut().map(|x| {
             *x += 1;
             *x
         });
-        self.fd.write_all(&to_bytes(page_header)?)?;
-        self.fd.write_all(page)?;
+        self.fd.write_all(&to_bytes(blob_header)?)?;
+        self.fd.write_all(blob)?;
         Ok(())
     }
 
@@ -252,8 +253,8 @@ impl<F: Read + Write + Seek> Journal<F> {
             return Ok(());
         }
         // commit snapshot by writting final empty page
-        self.fd.write_all(&to_bytes(&PageHeader::last())?)?;
-        self.page_count = None;
+        self.fd.write_all(&to_bytes(&BlobHeader::last())?)?;
+        self.blob_count = None;
 
         self.header.snapshot_counter += 1;
         self.header.eof = self.fd.stream_position()?;
@@ -304,7 +305,7 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Check if snapshot was already started
     fn snapshot_started(&self) -> bool {
-        self.page_count.is_some()
+        self.blob_count.is_some()
     }
 }
 
@@ -350,7 +351,7 @@ impl<'a, F> Iterator for IntoIter<'a, F>
 where
     F: Read + Write + Seek,
 {
-    type Item = Result<(SnapshotHeader, PageHeader, Vec<u8>)>;
+    type Item = Result<(SnapshotHeader, BlobHeader, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.initialized {
@@ -384,14 +385,14 @@ where
                 }
             };
         }
-        let page_header = match from_reader::<PageHeader, _>(&mut self.journal.fd) {
+        let blob_header = match from_reader::<BlobHeader, _>(&mut self.journal.fd) {
             Ok(p) => p,
             Err(e) => {
                 self.eoi = true;
                 return Some(Err(e.into()));
             }
         };
-        if page_header.is_last() {
+        if blob_header.is_last() {
             if self.current_snapshot.as_ref().unwrap().id + 1
                 == self.journal.header.snapshot_counter
             {
@@ -403,14 +404,14 @@ where
             }
         }
         let mut buf = vec![];
-        match buf.try_reserve(page_header.page_size as usize) {
+        match buf.try_reserve(blob_header.blob_size as usize) {
             Ok(_) => (),
             Err(e) => {
                 self.eoi = true;
                 return Some(Err(e.into()));
             }
         }
-        buf.resize(page_header.page_size as usize, 0);
+        buf.resize(blob_header.blob_size as usize, 0);
         match self.journal.fd.read_exact(buf.as_mut_slice()) {
             Ok(_) => (),
             Err(e) => {
@@ -420,7 +421,7 @@ where
         }
         Some(Ok((
             self.current_snapshot.as_ref().unwrap().clone(),
-            page_header,
+            blob_header,
             buf,
         )))
     }
@@ -457,29 +458,38 @@ impl Default for Header {
 pub struct SnapshotHeader {
     pub id: u64,
     pub timestamp: i64,
+    #[serde(
+        serialize_with = "serde_sqlite::se::none_as_zero",
+        deserialize_with = "serde_sqlite::de::zero_as_none"
+    )]
+    pub page_size: Option<u32>,
 }
 
 impl SnapshotHeader {
-    pub fn new(id: u64, timestamp: i64) -> Self {
-        Self { id, timestamp }
+    pub fn new(id: u64, timestamp: i64, page_size: Option<u32>) -> Self {
+        Self {
+            id,
+            timestamp,
+            page_size,
+        }
     }
 }
 
-/// Page Header
+/// Blob Header
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(16)]
-pub struct PageHeader {
+pub struct BlobHeader {
     pub offset: u64,
-    pub page_num: u32,
-    pub page_size: u32,
+    pub blob_num: u32,
+    pub blob_size: u32,
 }
 
-impl PageHeader {
-    fn new(offset: u64, page_num: u32, page_size: u32) -> Self {
+impl BlobHeader {
+    fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
         Self {
             offset,
-            page_num,
-            page_size,
+            blob_num,
+            blob_size,
         }
     }
 
@@ -487,13 +497,13 @@ impl PageHeader {
     pub fn last() -> Self {
         Self {
             offset: 0,
-            page_num: 0,
-            page_size: 0,
+            blob_num: 0,
+            blob_size: 0,
         }
     }
 
     // FIXME: should not be public
     pub fn is_last(&self) -> bool {
-        self.offset == 0 && self.page_num == 0 && self.page_size == 0
+        self.offset == 0 && self.blob_num == 0 && self.blob_size == 0
     }
 }

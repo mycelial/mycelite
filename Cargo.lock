@@ -513,6 +513,7 @@ dependencies = [
  "serde_sqlite",
  "toml",
  "ureq",
+ "utils",
 ]
 
 [[package]]

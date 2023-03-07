@@ -10,5 +10,5 @@ pub use crate::async_wrap::{
     AsyncWriteJournalStreamHandle,
 };
 pub use crate::error::Error;
-pub use crate::journal::{Header, Journal, PageHeader, SnapshotHeader};
-pub use crate::stream::{Protocol, Stream};
+pub use crate::journal::{BlobHeader, Header, Journal, SnapshotHeader};
+pub use crate::stream::{JournalVersion, Protocol, Stream};
