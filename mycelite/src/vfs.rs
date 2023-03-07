@@ -390,10 +390,11 @@ unsafe extern "C" fn mvfs_io_write(
                     ffi::SQLITE_IOERR_SHORT_READ => utils::get_diff(new_page, &[]),
                     _other => return ffi::SQLITE_ERROR,
                 };
-            iter.try_for_each(|(offset, diff)| {
+            iter.try_for_each(|(mut diff_offset, diff)| {
+                let diff_offset = diff_offset as i64 + offset;
                 journal
                     .new_snapshot(amt as u32)
-                    .and_then(|_| journal.new_blob(offset as u64, diff))
+                    .and_then(|_| journal.new_blob(diff_offset as u64, diff))
             })
         }
         None => Ok(()),
@@ -421,6 +422,7 @@ unsafe extern "C" fn mvfs_io_sync(pfile: *mut ffi::sqlite3_file, flags: c_int) -
     if let Some(replicator) = file.replicator.as_mut() {
         replicator.new_snapshot();
     }
+    println!("xsync");
     (*file.real.pMethods).xSync.unwrap()(&mut file.real, flags)
 }
 

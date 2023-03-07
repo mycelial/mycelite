@@ -1,11 +1,11 @@
 #[cfg(feature = "async")]
-mod async_wrap;
+mod async_bridge;
 mod error;
 mod journal;
 mod stream;
 
 #[cfg(feature = "async")]
-pub use crate::async_wrap::{
+pub use crate::async_bridge::{
     AsyncReadJournalStream, AsyncReadJournalStreamHandle, AsyncWriteJournalStream,
     AsyncWriteJournalStreamHandle,
 };

@@ -544,6 +544,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_sqlite",
+ "tokio",
 ]
 
 [[package]]

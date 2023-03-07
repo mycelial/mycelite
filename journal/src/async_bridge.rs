@@ -20,7 +20,7 @@ pub struct AsyncReadJournalStream {
 }
 
 impl AsyncReadJournalStream {
-    pub fn new(
+    pub fn try_new(
         journal_path: &str,
         snapshot_id: u64,
     ) -> Result<(Self, AsyncReadJournalStreamHandle), JournalError> {
@@ -43,9 +43,14 @@ impl AsyncReadJournalStream {
         ))
     }
 
+    pub fn spawn(self) {
+        tokio::task::spawn_blocking(move || self.enter_loop() );
+    }
+
     pub fn enter_loop(mut self) {
+        let version = self.journal.get_header().version;
         let mut stream =
-            JournalStream::new(self.journal.into_iter().skip_snapshots(self.snapshot_id));
+            JournalStream::new(self.journal.into_iter().skip_snapshots(self.snapshot_id), version);
 
         while let Some(waker) = self.rx.blocking_recv() {
             let mut buf = Vec::<u8>::with_capacity(0x0001_0000); // 65kb buffer
@@ -221,7 +226,7 @@ pub struct AsyncWriteJournalStream {
 }
 
 impl AsyncWriteJournalStream {
-    pub fn new(journal_path: &str) -> Result<(Self, AsyncWriteJournalStreamHandle), JournalError> {
+    pub fn try_new(journal_path: &str) -> Result<(Self, AsyncWriteJournalStreamHandle), JournalError> {
         let journal = match Journal::try_from(&journal_path) {
             Ok(j) => j,
             Err(e) if e.journal_not_exists() => Journal::create(&journal_path)?,
@@ -241,29 +246,41 @@ impl AsyncWriteJournalStream {
         ))
     }
 
+    pub fn spawn(mut self) {
+        tokio::task::spawn_blocking(move || self.enter_loop() );
+    }
+
     pub fn enter_loop(&mut self) -> std::io::Result<()> {
+        match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
+            Protocol::JournalVersion(v) if v == 1.into() => (),
+            other => return Err(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("expected version, got {other:?}"))
+            )
+        }
         loop {
-            match de::from_reader::<Protocol, _>(&mut self.read_receiver) {
-                Ok(Protocol::SnapshotHeader(snapshot_header)) => {
+            match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
+                Protocol::SnapshotHeader(snapshot_header) => {
                     self.journal.commit().map_err(to_err)?;
                     self.journal
                         .add_snapshot(&snapshot_header)
                         .map_err(to_err)?;
                 }
-                Ok(Protocol::PageHeader(page_header)) => {
-                    let mut page = vec![0; page_header.page_size as usize];
+                Protocol::BlobHeader(blob_header) => {
+                    let mut blob = vec![0; blob_header.blob_size as usize];
                     self.read_receiver
-                        .read_exact(page.as_mut_slice())
+                        .read_exact(blob.as_mut_slice())
                         .map_err(to_err)?;
                     self.journal
-                        .add_page(&page_header, page.as_slice())
+                        .add_blob(&blob_header, blob.as_slice())
                         .map_err(to_err)?;
                 }
-                Ok(Protocol::EndOfStream(_)) => {
+                Protocol::EndOfStream(_) => {
                     self.journal.commit().map_err(to_err)?;
                     return Ok(());
                 }
-                Err(e) => return Err(to_err(e)),
+                msg => {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("unexpected message: {msg:?}")))
+                }
             }
         }
     }
