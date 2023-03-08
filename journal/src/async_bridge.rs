@@ -3,6 +3,7 @@
 use crate::{Error as JournalError, Journal, Protocol, Stream as JournalStream};
 use serde_sqlite::de;
 use std::io::{BufRead, Read, Write};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -16,22 +17,21 @@ pub struct AsyncReadJournalStream {
     rx: Receiver<Waker>,
     tx: Sender<Vec<u8>>,
     snapshot_id: u64,
-    journal: Journal,
+    journal_path: PathBuf,
 }
 
 impl AsyncReadJournalStream {
-    pub fn try_new(
-        journal_path: &str,
+    pub fn try_new<P: Into<std::path::PathBuf>>(
+        journal_path: P,
         snapshot_id: u64,
     ) -> Result<(Self, AsyncReadJournalStreamHandle), JournalError> {
-        let journal = Journal::try_from(&journal_path)?;
         let (waker_tx, waker_rx) = channel::<Waker>(1);
         let (buffer_tx, buffer_rx) = channel::<Vec<u8>>(1);
         Ok((
             AsyncReadJournalStream {
                 tx: buffer_tx,
                 rx: waker_rx,
-                journal,
+                journal_path: journal_path.into(),
                 snapshot_id,
             },
             AsyncReadJournalStreamHandle {
@@ -43,14 +43,15 @@ impl AsyncReadJournalStream {
         ))
     }
 
-    pub fn spawn(self) {
-        tokio::task::spawn_blocking(move || self.enter_loop());
+    pub fn spawn(self) -> tokio::task::JoinHandle<Result<(), JournalError>> {
+        tokio::task::spawn_blocking(move || self.enter_loop())
     }
 
-    pub fn enter_loop(mut self) {
-        let version = self.journal.get_header().version;
+    pub fn enter_loop(mut self) -> Result<(), JournalError> {
+        let mut journal = Journal::try_from(self.journal_path.as_path())?;
+        let version = journal.get_header().version;
         let mut stream = JournalStream::new(
-            self.journal.into_iter().skip_snapshots(self.snapshot_id),
+            journal.into_iter().skip_snapshots(self.snapshot_id),
             version,
         );
 
@@ -59,16 +60,20 @@ impl AsyncReadJournalStream {
             unsafe { buf.set_len(buf.capacity()) };
             let read = match stream.read(buf.as_mut_slice()) {
                 Ok(read) => read,
-                // FIXME: ?
-                Err(_) => {
+                Err(e) => {
                     waker.wake();
-                    return;
+                    return Err(e.into());
                 }
             };
             unsafe { buf.set_len(read) };
-            self.tx.blocking_send(buf).ok();
+            let res = self.tx.blocking_send(buf);
             waker.wake();
+            if let Err(tokio::sync::mpsc::error::SendError(_)) = res {
+                let err = std::io::Error::new(std::io::ErrorKind::Other, "channel closed");
+                return Err(err.into());
+            }
         }
+        Ok(())
     }
 }
 
@@ -222,6 +227,18 @@ impl Read for ReadReceiver {
     }
 }
 
+impl Drop for ReadReceiver {
+    fn drop(&mut self) {
+        self.rx.close();
+        self.waker.take().map(|waker| waker.wake());
+        while let Ok(message) = self.rx.try_recv() {
+            if let AsyncWriteProto::W(waker) = message {
+                waker.wake()
+            }
+        }
+    }
+}
+
 pub struct AsyncWriteJournalStream {
     journal: Journal,
     read_receiver: ReadReceiver,
@@ -250,18 +267,20 @@ impl AsyncWriteJournalStream {
         ))
     }
 
-    pub fn spawn(mut self) {
-        tokio::task::spawn_blocking(move || self.enter_loop());
+    pub fn spawn(mut self) -> tokio::task::JoinHandle<Result<(), JournalError>> {
+        tokio::task::spawn_blocking(move || self.enter_loop())
     }
 
-    pub fn enter_loop(&mut self) -> std::io::Result<()> {
+    pub fn enter_loop(&mut self) -> Result<(), JournalError> {
+        let expected = Protocol::JournalVersion(1.into());
         match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
-            Protocol::JournalVersion(v) if v == 1.into() => (),
+            msg if msg == expected => (),
             other => {
-                return Err(std::io::Error::new(
+                let err = std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("expected version, got {other:?}"),
-                ))
+                    format!("expected {}, got: {}", expected, other),
+                );
+                return Err(err.into());
             }
         }
         loop {
@@ -289,7 +308,8 @@ impl AsyncWriteJournalStream {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("unexpected message: {msg:?}"),
-                    ))
+                    )
+                    .into())
                 }
             }
         }

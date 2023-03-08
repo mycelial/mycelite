@@ -20,6 +20,17 @@ pub enum Protocol {
     JournalVersion(JournalVersion),
 }
 
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::SnapshotHeader(_) => write!(f, "SnapshotHeader"),
+            Self::BlobHeader(_) => write!(f, "BlobHeader"),
+            Self::EndOfStream(_) => write!(f, "EndOfStream"),
+            Self::JournalVersion(v) => write!(f, "JournalVersion({})", v.version),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
 #[repr(transparent)]
 #[block(4)]

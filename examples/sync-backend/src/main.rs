@@ -12,23 +12,20 @@
 
 use axum::{
     extract::{BodyStream, Path, State, Query},
+    http::StatusCode,
     body,
     response,
     routing::get,
     Router, Server,
 };
 use futures::StreamExt;
-use journal::{Journal, Protocol, AsyncReadJournalStream, AsyncWriteJournalStream};
-use serde_sqlite::de;
-use std::io::Read;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use journal::{Journal, AsyncReadJournalStream, AsyncWriteJournalStream};
+use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use serde::Deserialize;
 
-fn to_error<T: std::fmt::Debug>(e: T) -> String {
-    format!("{e:?}")
+fn to_error<T: std::fmt::Debug>(_e: T) -> StatusCode {
+    StatusCode::INTERNAL_SERVER_ERROR
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -43,14 +40,14 @@ async fn post_snapshot(
     State(state): State<AppState>,
     Path(_domain): Path<String>,
     mut stream: BodyStream,
-) -> Result<&'static str, String> {
+) -> Result<&'static str, StatusCode> {
     let (write_stream, mut handle) = AsyncWriteJournalStream::try_new(state.journal_path).map_err(to_error)?;
-    write_stream.spawn();
+
+    let _ = write_stream.spawn();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(to_error)?;
         handle.write_all(&chunk).await.map_err(to_error)?;
     };
-    handle.flush().await.map_err(to_error)?;
     Ok("OK")
 }
 
@@ -58,7 +55,7 @@ async fn post_snapshot(
 async fn head_snapshot(
     State(state): State<AppState>,
     Path(_domain): Path<String>,
-) -> Result<impl response::IntoResponse, String> {
+) -> Result<impl response::IntoResponse, StatusCode> {
     let res = tokio::task::spawn_blocking(move ||{
         let journal = Journal::try_from(state.journal_path)
             .or_else(|_e| Journal::create(state.journal_path))?;
@@ -74,12 +71,12 @@ async fn get_snapshot(
     State(state): State<AppState>,
     Path(_domain): Path<String>,
     params: Option<Query<Params>>,
-) -> Result<impl response::IntoResponse, String> {
+) -> Result<impl response::IntoResponse, StatusCode> {
     let (read_stream, handle) = AsyncReadJournalStream::try_new(
         state.journal_path,
         params.map(|p| p.snapshot_id).unwrap_or(0)
     ).map_err(to_error)?;
-    read_stream.spawn();
+    let _ = read_stream.spawn();
     Ok(body::StreamBody::new(tokio_util::io::ReaderStream::new(handle)))
 }
 

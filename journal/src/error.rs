@@ -18,11 +18,13 @@ pub enum Error {
     },
     /// Snapshot not started
     SnapshotNotStarted,
-    /// attemt to add out of order blob
+    /// Attemt to add out of order blob
     OutOfOrderBlob {
         blob_num: u32,
         blob_count: Option<u32>,
     },
+    /// Unexpected Journal Version
+    UnexpectedJournalVersion { expected: u32, got: u32 },
 }
 
 impl From<IOError> for Error {
