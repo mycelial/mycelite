@@ -44,13 +44,15 @@ impl AsyncReadJournalStream {
     }
 
     pub fn spawn(self) {
-        tokio::task::spawn_blocking(move || self.enter_loop() );
+        tokio::task::spawn_blocking(move || self.enter_loop());
     }
 
     pub fn enter_loop(mut self) {
         let version = self.journal.get_header().version;
-        let mut stream =
-            JournalStream::new(self.journal.into_iter().skip_snapshots(self.snapshot_id), version);
+        let mut stream = JournalStream::new(
+            self.journal.into_iter().skip_snapshots(self.snapshot_id),
+            version,
+        );
 
         while let Some(waker) = self.rx.blocking_recv() {
             let mut buf = Vec::<u8>::with_capacity(0x0001_0000); // 65kb buffer
@@ -226,7 +228,9 @@ pub struct AsyncWriteJournalStream {
 }
 
 impl AsyncWriteJournalStream {
-    pub fn try_new(journal_path: &str) -> Result<(Self, AsyncWriteJournalStreamHandle), JournalError> {
+    pub fn try_new(
+        journal_path: &str,
+    ) -> Result<(Self, AsyncWriteJournalStreamHandle), JournalError> {
         let journal = match Journal::try_from(&journal_path) {
             Ok(j) => j,
             Err(e) if e.journal_not_exists() => Journal::create(&journal_path)?,
@@ -247,15 +251,18 @@ impl AsyncWriteJournalStream {
     }
 
     pub fn spawn(mut self) {
-        tokio::task::spawn_blocking(move || self.enter_loop() );
+        tokio::task::spawn_blocking(move || self.enter_loop());
     }
 
     pub fn enter_loop(&mut self) -> std::io::Result<()> {
         match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
             Protocol::JournalVersion(v) if v == 1.into() => (),
-            other => return Err(
-                std::io::Error::new(std::io::ErrorKind::Other, format!("expected version, got {other:?}"))
-            )
+            other => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("expected version, got {other:?}"),
+                ))
+            }
         }
         loop {
             match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
@@ -279,7 +286,10 @@ impl AsyncWriteJournalStream {
                     return Ok(());
                 }
                 msg => {
-                    return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("unexpected message: {msg:?}")))
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("unexpected message: {msg:?}"),
+                    ))
                 }
             }
         }
