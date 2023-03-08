@@ -188,15 +188,13 @@ impl<F: Read + Write + Seek> Journal<F> {
     }
 
     /// Add new blob
-    ///
-    /// Automatically starts new snapshot if there is none
-    pub fn new_blob(&mut self, offset: u64, page: &[u8]) -> Result<()> {
+    pub fn new_blob(&mut self, offset: u64, blob: &[u8]) -> Result<()> {
         let blob_num = match self.blob_count {
             Some(c) => c,
             None => return Err(Error::SnapshotNotStarted),
         };
-        let blob_header = BlobHeader::new(offset, blob_num, page.len() as u32);
-        self.add_blob(&blob_header, page)
+        let blob_header = BlobHeader::new(offset, blob_num, blob.len() as u32);
+        self.add_blob(&blob_header, blob)
     }
 
     /// Add existing snapshot
