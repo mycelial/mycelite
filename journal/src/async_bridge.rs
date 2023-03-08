@@ -240,24 +240,19 @@ impl Drop for ReadReceiver {
 }
 
 pub struct AsyncWriteJournalStream {
-    journal: Journal,
+    journal_path: PathBuf,
     read_receiver: ReadReceiver,
 }
 
 impl AsyncWriteJournalStream {
-    pub fn try_new(
-        journal_path: &str,
+    pub fn try_new<P: Into<PathBuf>>(
+        journal_path: P
     ) -> Result<(Self, AsyncWriteJournalStreamHandle), JournalError> {
-        let journal = match Journal::try_from(&journal_path) {
-            Ok(j) => j,
-            Err(e) if e.journal_not_exists() => Journal::create(&journal_path)?,
-            Err(e) => return Err(e),
-        };
         let (buf_tx, buf_rx) = channel(2); // enough space to store waker and buf
         let (req_tx, req_rx) = channel(1);
         Ok((
             Self {
-                journal,
+                journal_path: journal_path.into(),
                 read_receiver: ReadReceiver::new(buf_rx, req_tx),
             },
             AsyncWriteJournalStreamHandle {
@@ -272,6 +267,12 @@ impl AsyncWriteJournalStream {
     }
 
     pub fn enter_loop(&mut self) -> Result<(), JournalError> {
+        let mut journal = match Journal::try_from(self.journal_path.as_path()) {
+            Ok(j) => j,
+            Err(e) if e.journal_not_exists() => Journal::create(self.journal_path.as_path())?,
+            Err(e) => return Err(e),
+        };
+
         let expected = Protocol::JournalVersion(1.into());
         match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
             msg if msg == expected => (),
@@ -286,8 +287,8 @@ impl AsyncWriteJournalStream {
         loop {
             match de::from_reader::<Protocol, _>(&mut self.read_receiver).map_err(to_err)? {
                 Protocol::SnapshotHeader(snapshot_header) => {
-                    self.journal.commit().map_err(to_err)?;
-                    self.journal
+                    journal.commit().map_err(to_err)?;
+                    journal
                         .add_snapshot(&snapshot_header)
                         .map_err(to_err)?;
                 }
@@ -296,12 +297,12 @@ impl AsyncWriteJournalStream {
                     self.read_receiver
                         .read_exact(blob.as_mut_slice())
                         .map_err(to_err)?;
-                    self.journal
+                    journal
                         .add_blob(&blob_header, blob.as_slice())
                         .map_err(to_err)?;
                 }
                 Protocol::EndOfStream(_) => {
-                    self.journal.commit().map_err(to_err)?;
+                    journal.commit().map_err(to_err)?;
                     return Ok(());
                 }
                 msg => {
