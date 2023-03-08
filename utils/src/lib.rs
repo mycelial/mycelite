@@ -1,50 +1,56 @@
 use std::iter;
 
-const HEADER_SIZE: usize = 16;
+const GAP: usize = 16;
 
 pub fn get_diff<'a>(
     new_page: &'a [u8],
     old_page: &'a [u8],
 ) -> impl Iterator<Item = (usize, &'a [u8])> + 'a {
-    let l = new_page.len();
-    let o = old_page.len();
-
-    let mut offset = 0;
-    let mut offset_end = 0;
-
-    old_page
+    let iter = old_page
         .iter()
         .chain(iter::repeat::<&u8>(&0))
         .zip(new_page)
-        .enumerate()
-        .filter_map(move |(i, values)| {
-            if values.0 == values.1 {
-                // if this value matches and the previous one did not, we know we just passed the end of one or more
-                // values that didn't match. In that case, we note the position by setting `offset_end` to `i`
-                if i != 0 && ((i < o && new_page[i - 1] != old_page[i - 1]) || i >= o && new_page[i - 1] != 0) {
-                    offset_end = i;
-                }
-                // if we're HEADER_SIZE past the last section that needs changing, or at the end, we need to return the last blob of changes
-                if  offset != offset_end && (offset_end + HEADER_SIZE == i || (i == (l - 1) && offset_end + HEADER_SIZE > i))
-                {
-                    return Some((offset, &new_page[offset..offset_end]));
-                }
-            } else {
-                // if this value doesn't match but the previous one did, we know we're at the beginning of one or more
-                // values that don't match. we note the position by updating `offset` to `i`.
-                if i == 0 || ((i < o && new_page[i - 1] == old_page[i - 1]) || i >= o && new_page[i-1] == 0) {
-                    if offset_end == 0 || offset_end + HEADER_SIZE < i {
-                        offset = i;
+        .map(|(&old, &new)| (old, new))
+        .enumerate();
+
+    Diff {
+        iter,
+        gap: GAP,
+        range: None,
+    }
+    .map(|(start, end)| (start, &new_page[start..=end]))
+}
+
+pub struct Diff<I> {
+    iter: I,
+    gap: usize,
+    range: Option<(usize, usize)>,
+}
+
+impl<I> Iterator for Diff<I>
+where
+    I: Iterator<Item = (usize, (u8, u8))>,
+{
+    type Item = (usize, usize);
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(item) = self.iter.next() {
+            match item {
+                (i, (old, new)) if old != new => {
+                    self.range = match self.range {
+                        None => Some((i, i)),
+                        Some((start, _)) => Some((start, i)),
                     }
                 }
-                // normally, we add the values that need to be changed as soon as we see a matching value again, but
-                // when we're on the last value that doesn't match, we need to have special handing to include it.
-                if i == (l - 1) {
-                    return Some((offset, &new_page[offset..=i]));
-                }
+                (i, _) => match self.range {
+                    Some((_, end)) if end + self.gap < i => {
+                        return self.range.take();
+                    }
+                    _ => {}
+                },
             }
-            None
-        })
+        }
+        self.range.take()
+    }
 }
 
 #[cfg(test)]
