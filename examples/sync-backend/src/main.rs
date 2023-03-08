@@ -41,12 +41,10 @@ async fn post_snapshot(
     Path(_domain): Path<String>,
     mut stream: BodyStream,
 ) -> Result<&'static str, StatusCode> {
-    let (write_stream, mut handle) = AsyncWriteJournalStream::try_new(state.journal_path).map_err(to_error)?;
-
-    let _ = write_stream.spawn();
+    let mut write_stream = AsyncWriteJournalStream::new(state.journal_path).spawn();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(to_error)?;
-        handle.write_all(&chunk).await.map_err(to_error)?;
+        write_stream.write_all(&chunk).await.map_err(to_error)?;
     };
     Ok("OK")
 }
@@ -72,12 +70,11 @@ async fn get_snapshot(
     Path(_domain): Path<String>,
     params: Option<Query<Params>>,
 ) -> Result<impl response::IntoResponse, StatusCode> {
-    let (read_stream, handle) = AsyncReadJournalStream::try_new(
+    let stream = AsyncReadJournalStream::new(
         state.journal_path,
         params.map(|p| p.snapshot_id).unwrap_or(0)
-    ).map_err(to_error)?;
-    let _ = read_stream.spawn();
-    Ok(body::StreamBody::new(tokio_util::io::ReaderStream::new(handle)))
+    ).spawn();
+    Ok(body::StreamBody::new(tokio_util::io::ReaderStream::new(stream)))
 }
 
 #[derive(Debug, Clone)]
