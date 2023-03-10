@@ -3,6 +3,7 @@
 use crate::{Error as JournalError, Journal, Protocol, Stream as JournalStream};
 use serde_sqlite::de;
 use std::io::{BufRead, Read, Write};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -13,55 +14,63 @@ fn to_err<E: std::error::Error + Send + Sync + 'static>(err: E) -> std::io::Erro
 }
 
 pub struct AsyncReadJournalStream {
-    rx: Receiver<Waker>,
-    tx: Sender<Vec<u8>>,
     snapshot_id: u64,
-    journal: Journal,
+    journal_path: PathBuf,
 }
 
 impl AsyncReadJournalStream {
-    pub fn new(
-        journal_path: &str,
-        snapshot_id: u64,
-    ) -> Result<(Self, AsyncReadJournalStreamHandle), JournalError> {
-        let journal = Journal::try_from(&journal_path)?;
-        let (waker_tx, waker_rx) = channel::<Waker>(1);
-        let (buffer_tx, buffer_rx) = channel::<Vec<u8>>(1);
-        Ok((
-            AsyncReadJournalStream {
-                tx: buffer_tx,
-                rx: waker_rx,
-                journal,
-                snapshot_id,
-            },
-            AsyncReadJournalStreamHandle {
-                tx: waker_tx,
-                rx: buffer_rx,
-                buf: None,
-                read: 0,
-            },
-        ))
+    pub fn new<P: Into<std::path::PathBuf>>(journal_path: P, snapshot_id: u64) -> Self {
+        AsyncReadJournalStream {
+            journal_path: journal_path.into(),
+            snapshot_id,
+        }
     }
 
-    pub fn enter_loop(mut self) {
-        let mut stream =
-            JournalStream::new(self.journal.into_iter().skip_snapshots(self.snapshot_id));
+    pub fn spawn(self) -> AsyncReadJournalStreamHandle {
+        let (waker_tx, mut waker_rx) = channel::<Waker>(1);
+        let (mut buffer_tx, buffer_rx) = channel::<Vec<u8>>(1);
+        let join_handle =
+            tokio::task::spawn_blocking(move || self.enter_loop(&mut waker_rx, &mut buffer_tx));
+        AsyncReadJournalStreamHandle {
+            tx: waker_tx,
+            rx: buffer_rx,
+            buf: None,
+            read: 0,
+            join_handle,
+        }
+    }
 
-        while let Some(waker) = self.rx.blocking_recv() {
+    pub fn enter_loop(
+        self,
+        rx: &mut Receiver<Waker>,
+        tx: &mut Sender<Vec<u8>>,
+    ) -> Result<(), JournalError> {
+        let mut journal = Journal::try_from(self.journal_path.as_path())?;
+        let version = journal.get_header().version;
+        let mut stream = JournalStream::new(
+            journal.into_iter().skip_snapshots(self.snapshot_id),
+            version,
+        );
+
+        while let Some(waker) = rx.blocking_recv() {
             let mut buf = Vec::<u8>::with_capacity(0x0001_0000); // 65kb buffer
             unsafe { buf.set_len(buf.capacity()) };
             let read = match stream.read(buf.as_mut_slice()) {
                 Ok(read) => read,
-                // FIXME: ?
-                Err(_) => {
+                Err(e) => {
                     waker.wake();
-                    return;
+                    return Err(e.into());
                 }
             };
             unsafe { buf.set_len(read) };
-            self.tx.blocking_send(buf).ok();
+            let res = tx.blocking_send(buf);
             waker.wake();
+            if let Err(tokio::sync::mpsc::error::SendError(_)) = res {
+                let err = std::io::Error::new(std::io::ErrorKind::Other, "channel closed");
+                return Err(err.into());
+            }
         }
+        Ok(())
     }
 }
 
@@ -71,6 +80,13 @@ pub struct AsyncReadJournalStreamHandle {
     read: usize,
     rx: Receiver<Vec<u8>>,
     tx: Sender<Waker>,
+    join_handle: tokio::task::JoinHandle<Result<(), JournalError>>,
+}
+
+impl AsyncReadJournalStreamHandle {
+    pub async fn join(self) -> Result<Result<(), JournalError>, tokio::task::JoinError> {
+        self.join_handle.await
+    }
 }
 
 impl AsyncRead for AsyncReadJournalStreamHandle {
@@ -131,7 +147,7 @@ enum AsyncWriteProto {
     B(Vec<u8>),
 }
 
-struct ReadReceiver {
+pub struct ReadReceiver {
     buf: Vec<u8>,
     buf_pos: usize,
     waker: Option<Waker>,
@@ -215,55 +231,85 @@ impl Read for ReadReceiver {
     }
 }
 
+impl Drop for ReadReceiver {
+    fn drop(&mut self) {
+        self.rx.close();
+        self.waker.take().map(|waker| waker.wake());
+        while let Ok(message) = self.rx.try_recv() {
+            if let AsyncWriteProto::W(waker) = message {
+                waker.wake()
+            }
+        }
+    }
+}
+
 pub struct AsyncWriteJournalStream {
-    journal: Journal,
-    read_receiver: ReadReceiver,
+    journal_path: PathBuf,
 }
 
 impl AsyncWriteJournalStream {
-    pub fn new(journal_path: &str) -> Result<(Self, AsyncWriteJournalStreamHandle), JournalError> {
-        let journal = match Journal::try_from(&journal_path) {
-            Ok(j) => j,
-            Err(e) if e.journal_not_exists() => Journal::create(&journal_path)?,
-            Err(e) => return Err(e),
-        };
-        let (buf_tx, buf_rx) = channel(2); // enough space to store waker and buf
-        let (req_tx, req_rx) = channel(1);
-        Ok((
-            Self {
-                journal,
-                read_receiver: ReadReceiver::new(buf_rx, req_tx),
-            },
-            AsyncWriteJournalStreamHandle {
-                tx: buf_tx,
-                rx: req_rx,
-            },
-        ))
+    pub fn new<P: Into<PathBuf>>(journal_path: P) -> Self {
+        Self {
+            journal_path: journal_path.into(),
+        }
     }
 
-    pub fn enter_loop(&mut self) -> std::io::Result<()> {
+    pub fn spawn(mut self) -> AsyncWriteJournalStreamHandle {
+        let (buf_tx, buf_rx) = channel(2); // enough space to store waker and buf
+        let (req_tx, req_rx) = channel(1);
+        let read_receiver = ReadReceiver::new(buf_rx, req_tx);
+        let join_handle = tokio::task::spawn_blocking(move || self.enter_loop(read_receiver));
+        AsyncWriteJournalStreamHandle {
+            tx: buf_tx,
+            rx: req_rx,
+            join_handle,
+        }
+    }
+
+    pub fn enter_loop(&mut self, mut read_receiver: ReadReceiver) -> Result<(), JournalError> {
+        let mut journal = match Journal::try_from(self.journal_path.as_path()) {
+            Ok(j) => j,
+            Err(e) if e.journal_not_exists() => Journal::create(self.journal_path.as_path())?,
+            Err(e) => return Err(e),
+        };
+
+        let expected = Protocol::JournalVersion(1.into());
+        match de::from_reader::<Protocol, _>(&mut read_receiver).map_err(to_err)? {
+            msg if msg == expected => (),
+            other => {
+                let err = std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("expected {}, got: {}", expected, other),
+                );
+                return Err(err.into());
+            }
+        }
         loop {
-            match de::from_reader::<Protocol, _>(&mut self.read_receiver) {
-                Ok(Protocol::SnapshotHeader(snapshot_header)) => {
-                    self.journal.commit().map_err(to_err)?;
-                    self.journal
-                        .add_snapshot(&snapshot_header)
+            match de::from_reader::<Protocol, _>(&mut read_receiver).map_err(to_err)? {
+                Protocol::SnapshotHeader(snapshot_header) => {
+                    journal.commit().map_err(to_err)?;
+                    journal.add_snapshot(&snapshot_header).map_err(to_err)?;
+                }
+                Protocol::BlobHeader(blob_header) => {
+                    let mut blob = vec![0; blob_header.blob_size as usize];
+                    read_receiver
+                        .read_exact(blob.as_mut_slice())
+                        .map_err(to_err)?;
+                    journal
+                        .add_blob(&blob_header, blob.as_slice())
                         .map_err(to_err)?;
                 }
-                Ok(Protocol::PageHeader(page_header)) => {
-                    let mut page = vec![0; page_header.page_size as usize];
-                    self.read_receiver
-                        .read_exact(page.as_mut_slice())
-                        .map_err(to_err)?;
-                    self.journal
-                        .add_page(&page_header, page.as_slice())
-                        .map_err(to_err)?;
-                }
-                Ok(Protocol::EndOfStream(_)) => {
-                    self.journal.commit().map_err(to_err)?;
+                Protocol::EndOfStream(_) => {
+                    journal.commit().map_err(to_err)?;
                     return Ok(());
                 }
-                Err(e) => return Err(to_err(e)),
+                msg => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("unexpected message: {msg:?}"),
+                    )
+                    .into())
+                }
             }
         }
     }
@@ -273,6 +319,13 @@ impl AsyncWriteJournalStream {
 pub struct AsyncWriteJournalStreamHandle {
     tx: Sender<AsyncWriteProto>,
     rx: Receiver<()>,
+    join_handle: tokio::task::JoinHandle<Result<(), JournalError>>,
+}
+
+impl AsyncWriteJournalStreamHandle {
+    pub async fn join(self) -> Result<Result<(), JournalError>, tokio::task::JoinError> {
+        self.join_handle.await
+    }
 }
 
 impl AsyncWrite for AsyncWriteJournalStreamHandle {

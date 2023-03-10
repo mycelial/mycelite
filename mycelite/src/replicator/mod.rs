@@ -1,10 +1,5 @@
-#[cfg(not(feature = "replicator"))]
-mod noop_replicator;
-#[cfg(feature = "replicator")]
-mod replicator;
+#[cfg_attr(not(feature = "replicator"), path = "noop_replicator.rs")]
+#[cfg_attr(feature = "replicator", path = "http_replicator.rs")]
+mod replicator_impl;
 
-#[cfg(feature = "replicator")]
-pub use replicator::*;
-
-#[cfg(not(feature = "replicator"))]
-pub use noop_replicator::*;
+pub use replicator_impl::*;

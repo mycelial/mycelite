@@ -16,6 +16,7 @@ replicator = ["dep:ureq", "dep:base64"]
 [dependencies]
 libsqlite-sys = { path = "../libsqlite-sys" }
 journal = { path = "../journal" }
+utils = { path = "../utils" }
 page_parser = { path = "../page_parser" }
 serde_sqlite = { path = "../serde_sqlite" }
 once_cell = "1"

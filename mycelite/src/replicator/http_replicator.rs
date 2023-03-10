@@ -114,7 +114,12 @@ impl Replicator {
         if let Some(b) = self.get_basic_auth_header(client_id.as_deref(), secret.as_deref()) {
             req = req.set("Authorization", &b)
         }
-        let stream = Stream::from(self.journal.into_iter().skip_snapshots(remote_snapshot_id));
+
+        let version = self.journal.get_header().version;
+        let stream = Stream::from((
+            version,
+            self.journal.into_iter().skip_snapshots(remote_snapshot_id),
+        ));
 
         // FIXME: status code are not checked
         req.send(stream)?;
@@ -148,21 +153,30 @@ impl Replicator {
         let res = req.call()?;
 
         let mut reader = res.into_reader();
+
+        match de::from_reader::<Protocol, _>(&mut reader)? {
+            Protocol::JournalVersion(v) if v == 1_u32.into() => (),
+            Protocol::JournalVersion(v) => {
+                return Err(format!("unexpected journal version: {v:?}").into())
+            }
+            _ => return Err("expected version header".into()),
+        };
         loop {
             match de::from_reader::<Protocol, _>(&mut reader)? {
                 Protocol::SnapshotHeader(snapshot_header) => {
                     self.journal.commit()?;
                     self.journal.add_snapshot(&snapshot_header)?
                 }
-                Protocol::PageHeader(page_header) => {
-                    let mut page = vec![0; page_header.page_size as usize];
-                    reader.read_exact(page.as_mut_slice())?;
-                    self.journal.add_page(&page_header, page.as_slice())?;
+                Protocol::BlobHeader(blob_header) => {
+                    let mut blob = vec![0; blob_header.blob_size as usize];
+                    reader.read_exact(blob.as_mut_slice())?;
+                    self.journal.add_blob(&blob_header, blob.as_slice())?;
                 }
                 Protocol::EndOfStream(_) => {
                     self.journal.commit()?;
                     break;
                 }
+                Protocol::JournalVersion(_) => return Err("version header was not expected".into()),
             }
         }
         Ok((local_snapshot_id, self.journal.current_snapshot()))

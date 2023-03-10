@@ -148,9 +148,13 @@ impl MclVFSFile {
         for res in iter {
             let (offset, page) = res?;
             let page = page.as_slice();
-            journal.new_page(offset, page)?;
+            // it's ok to call snapshot multiple times, if it's already started, it's noop
+            journal.new_snapshot(page.len() as u32)?;
+            for (diff_offset, blob) in utils::get_diff(page, &[]) {
+                journal.new_blob(offset + diff_offset as u64, blob)?;
+            }
         }
-        journal.commit().map_err(Into::into)
+        Ok(journal.commit()?)
     }
 
     fn setup_journal(
@@ -378,16 +382,30 @@ unsafe extern "C" fn mvfs_io_write(
             return ffi::SQLITE_READONLY;
         }
     }
-    let result = file.journal.as_mut().map(|journal| {
-        journal.new_page(
-            offset as u64,
-            std::slice::from_raw_parts(buf as *const u8, amt as usize),
-        )
-    });
-    match result {
-        None | Some(Ok(_)) => (),
-        Some(Err(_e)) => return ffi::SQLITE_ERROR,
+    let result = match file.journal.as_mut() {
+        Some(journal) => {
+            let new_page = std::slice::from_raw_parts(buf.cast::<u8>(), amt as usize);
+            let mut old_page = vec![0_u8; amt as usize];
+            let mut iter =
+                match MclVFSIO.xRead.unwrap()(pfile, old_page.as_mut_ptr().cast(), amt, offset) {
+                    // existing page
+                    ffi::SQLITE_OK => utils::get_diff(new_page, &old_page),
+                    // new page
+                    ffi::SQLITE_IOERR_SHORT_READ => utils::get_diff(new_page, &[]),
+                    _other => return ffi::SQLITE_ERROR,
+                };
+            iter.try_for_each(|(diff_offset, diff)| {
+                let diff_offset = diff_offset as i64 + offset;
+                journal
+                    .new_snapshot(amt as u32)
+                    .and_then(|_| journal.new_blob(diff_offset as u64, diff))
+            })
+        }
+        None => Ok(()),
     };
+    if let Err(_e) = result {
+        return ffi::SQLITE_ERROR;
+    }
     (*file.real.pMethods).xWrite.unwrap()(&mut file.real, buf, amt, offset)
 }
 

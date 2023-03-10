@@ -1,7 +1,7 @@
 //! Streaming protocol for journal
 
 use crate::error::Error as JournalError;
-use crate::journal::{IntoIter, Journal, PageHeader, SnapshotHeader};
+use crate::journal::{BlobHeader, IntoIter, Journal, SnapshotHeader};
 use block::{block, Block};
 use serde::{Deserialize, Serialize};
 use serde_sqlite::to_writer;
@@ -15,8 +15,39 @@ pub struct End {}
 #[block]
 pub enum Protocol {
     SnapshotHeader(SnapshotHeader),
-    PageHeader(PageHeader),
+    BlobHeader(BlobHeader),
     EndOfStream(End),
+    JournalVersion(JournalVersion),
+}
+
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::SnapshotHeader(_) => write!(f, "SnapshotHeader"),
+            Self::BlobHeader(_) => write!(f, "BlobHeader"),
+            Self::EndOfStream(_) => write!(f, "EndOfStream"),
+            Self::JournalVersion(v) => write!(f, "JournalVersion({})", v.version),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+#[block(4)]
+pub struct JournalVersion {
+    version: u32,
+}
+
+impl From<u32> for JournalVersion {
+    fn from(version: u32) -> Self {
+        Self { version }
+    }
+}
+
+impl From<JournalVersion> for u32 {
+    fn from(val: JournalVersion) -> Self {
+        val.version
+    }
 }
 
 impl From<SnapshotHeader> for Protocol {
@@ -25,9 +56,15 @@ impl From<SnapshotHeader> for Protocol {
     }
 }
 
-impl From<PageHeader> for Protocol {
-    fn from(p: PageHeader) -> Self {
-        Self::PageHeader(p)
+impl From<BlobHeader> for Protocol {
+    fn from(p: BlobHeader) -> Self {
+        Self::BlobHeader(p)
+    }
+}
+
+impl From<JournalVersion> for Protocol {
+    fn from(v: JournalVersion) -> Self {
+        Self::JournalVersion(v)
     }
 }
 
@@ -41,6 +78,8 @@ impl Protocol {
 /// Converts iteration over journal into serialized Protocol stream
 pub struct Stream<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> {
     iter: I,
+    version: u32,
+    version_written: bool,
     buf: Vec<u8>,
     read: usize,
     cur_snapshot_id: Option<u64>,
@@ -51,22 +90,25 @@ pub struct Stream<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> {
 // stream, which starts from 'scratch'
 impl<'a, F: Read + Write + Seek> From<&'a mut Journal<F>> for Stream<'a, IntoIter<'a, F>> {
     fn from(journal: &'a mut Journal<F>) -> Self {
-        Stream::new(journal.into_iter())
+        let version = journal.get_header().version;
+        Stream::new(journal.into_iter(), version)
     }
 }
 
 // stream with any iterator with same Item type
-impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> From<I> for Stream<'a, I> {
-    fn from(iter: I) -> Self {
-        Stream::new(iter)
+impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> From<(u32, I)> for Stream<'a, I> {
+    fn from((version, iter): (u32, I)) -> Self {
+        Stream::new(iter, version)
     }
 }
 
 impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> Stream<'a, I> {
-    pub fn new(iter: I) -> Self {
+    pub fn new(iter: I, version: u32) -> Self {
         Self {
             iter,
-            buf: vec![],
+            version,
+            version_written: false,
+            buf: Vec::with_capacity(8192),
             read: 0,
             cur_snapshot_id: None,
             finished: false,
@@ -104,6 +146,17 @@ impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> BufRead for Strea
             self.read = 0;
             self.buf.clear();
         }
+
+        // always write version first
+        if !self.version_written {
+            let version: Protocol = JournalVersion::from(self.version).into();
+            self.resize_buf(version.iblock_size());
+            to_writer(self.buf.as_mut_slice(), &version).map_err(Self::to_io_error)?;
+            self.version_written = true;
+            return Ok(self.buf.as_slice());
+        }
+
+        // body write
         match self.iter.next() {
             Some(Ok((snapshot_h, page_h, page))) => {
                 let snapshot_id = snapshot_h.id;
@@ -115,6 +168,7 @@ impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> BufRead for Strea
                 self.resize_buf(total_len);
 
                 let mut read_buf = Cursor::new(self.buf.as_mut_slice());
+
                 if self.cur_snapshot_id != Some(snapshot_id) {
                     to_writer(&mut read_buf, &snapshot_h).map_err(Self::to_io_error)?;
                     self.cur_snapshot_id = Some(snapshot_id)
@@ -129,6 +183,7 @@ impl<'a, I: Iterator<Item = <IntoIter<'a> as Iterator>::Item>> BufRead for Strea
             Some(Err(e)) => return Err(Self::to_io_error(e)),
             None if !self.finished => {
                 self.finished = true;
+
                 let eos = Protocol::end();
                 self.resize_buf(eos.iblock_size());
                 to_writer(self.buf.as_mut_slice(), &eos).map_err(Self::to_io_error)?;

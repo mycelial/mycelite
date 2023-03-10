@@ -16,11 +16,15 @@ pub enum Error {
         snapshot_id: u64,
         journal_snapshot_id: u64,
     },
-    /// attemt to add out of order page
-    OutOfOrderPage {
-        page_num: u32,
-        page_count: Option<u32>,
+    /// Snapshot not started
+    SnapshotNotStarted,
+    /// Attemt to add out of order blob
+    OutOfOrderBlob {
+        blob_num: u32,
+        blob_count: Option<u32>,
     },
+    /// Unexpected Journal Version
+    UnexpectedJournalVersion { expected: u32, got: u32 },
 }
 
 impl From<IOError> for Error {

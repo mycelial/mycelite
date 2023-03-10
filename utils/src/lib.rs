@@ -32,8 +32,9 @@ where
     I: Iterator<Item = (usize, (u8, u8))>,
 {
     type Item = (usize, usize);
+
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(item) = self.iter.next() {
+        for item in self.iter.by_ref() {
             match item {
                 (i, (old, new)) if old != new => {
                     self.range = match self.range {
