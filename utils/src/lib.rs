@@ -32,8 +32,9 @@ where
     I: Iterator<Item = (usize, (u8, u8))>,
 {
     type Item = (usize, usize);
+
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(item) = self.iter.next() {
+        for item in self.iter.by_ref() {
             match item {
                 (i, (old, new)) if old != new => {
                     self.range = match self.range {
@@ -62,7 +63,8 @@ mod tests {
     fn it_works() {
         let expected: Vec<(usize, &[u8])> = vec![];
         let results = get_diff(&[], &[]);
-        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected); }
+        assert_eq!(results.collect::<Vec<(usize, &[u8])>>(), expected);
+    }
 
     #[test]
     fn test_it_works_with_actual_data() {
