@@ -6,3 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+block = { path = "../block" }
+tokio = { version = "1", features=["full"]}
+serde_sqlite = { path = "../serde_sqlite" }
+serde = { version = "1", features = ["derive"] }
