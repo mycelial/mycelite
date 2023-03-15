@@ -1,28 +1,12 @@
 use block::block;
-use std::{
-    io::IoSlice,
-    path,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{path, pin::Pin};
 
 use serde::{Deserialize, Serialize};
-use serde_sqlite::{from_reader, to_bytes};
-use tokio::{io::ReadBuf, runtime::Runtime};
+use serde_sqlite::to_bytes;
 
-use async_trait::async_trait;
-
-use tokio::io::unix::AsyncFd;
-use tokio::{
-    fs::File,
-    io::{
-        AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
-        BufWriter, SeekFrom,
-    },
-};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 type Result<T> = std::result::Result<T, Error>;
-type Result2<T> = std::result::Result<T, std::io::Error>;
 
 const DEFAULT_BUFFER_SIZE: usize = 65536;
 
@@ -102,94 +86,6 @@ impl Error {
         }
     }
 }
-
-#[derive(Debug)]
-enum Fd<F, W, R> {
-    Raw(F),
-    Writer(W),
-    Reader(R),
-    // placeholder state to aid fd mode switching
-    Nada,
-}
-
-impl<F> Fd<F, BufWriter<F>, BufReader<F>>
-where
-    F: AsyncRead + AsyncWrite + AsyncSeek,
-{
-    fn as_fd(&mut self) -> F {
-        match std::mem::replace(self, Self::Nada) {
-            Self::Reader(fd) => fd.into_inner(),
-            // Self::Writer(fd) => fd.into_parts().0,
-            Self::Writer(fd) => fd.into_inner(),
-            Self::Raw(fd) => fd,
-            Self::Nada => unreachable!(),
-        }
-    }
-
-    /// Swith Fd to 'raw' mode
-    pub fn as_raw(&mut self) {
-        let fd = self.as_fd();
-        let _ = std::mem::replace(self, Fd::Raw(fd));
-    }
-
-    /// Switch Fd to buffered write mode
-    pub fn as_writer(&mut self, buf_size: usize) {
-        let fd = self.as_fd();
-        // FIXME: re-use buffer
-        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(buf_size, fd)));
-    }
-
-    /// Switch Fd to buffered read mode
-    pub fn as_reader(&mut self, buf_size: usize) {
-        let fd = self.as_fd();
-        // FIXME: re-use buffer
-        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(buf_size, fd)));
-    }
-}
-
-impl<F: AsyncWrite, W: AsyncWrite, R> AsyncWrite for Fd<F, W, R> {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result2<usize>> {
-        todo!()
-    }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result2<()>> {
-        todo!()
-    }
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result2<()>> {
-        todo!()
-    }
-
-    // Provided methods
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<Result2<usize>> {
-        todo!()
-    }
-    fn is_write_vectored(&self) -> bool {
-        todo!()
-    }
-}
-
-impl<F: AsyncRead, W, R: AsyncRead> AsyncRead for Fd<F, W, R> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>
-    ) -> Poll<Result2<()>> {
-        todo!();
-    }
-}
-
-impl<F: AsyncSeek, W: AsyncSeek, R: AsyncSeek> AsyncSeek for Fd<F, W, R> {
-    fn start_seek(self: Pin<&mut Self>, position: SeekFrom) -> Result2<()> {
-        todo!()
-    }
-    fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result2<u64>> {
-        todo!()
-    }
-}
-
 #[derive(Debug)]
 pub struct AsyncJournal<F = tokio::fs::File>
 where
@@ -198,11 +94,14 @@ where
     /// Journal header
     header: Header,
     /// Wrapped into Fd reader/writer/seeker
-    fd: Fd<F, BufWriter<F>, BufReader<F>>,
+    // fd: Fd<F, BufWriter<F>, BufReader<F>>,
     /// snapshot page count
     blob_count: Option<u32>,
     /// Buffer size
     buffer_sz: usize,
+
+    /// async f? fd?
+    async_f: F,
 }
 
 impl AsyncJournal<tokio::fs::File> {
@@ -254,9 +153,9 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     pub fn from(header: Header, fd: F, blob_count: Option<u32>) -> Self {
         Self {
             header,
-            fd: Fd::Raw(fd),
             blob_count,
             buffer_sz: DEFAULT_BUFFER_SIZE,
+            async_f: fd,
         }
     }
 
@@ -311,8 +210,8 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
             *x += 1;
             *x
         });
-        self.fd.write_all(&to_bytes(blob_header)?).await?;
-        self.fd.write_all(blob).await?;
+        self.async_f.write_all(&to_bytes(blob_header)?).await?;
+        self.async_f.write_all(blob).await?;
         Ok(())
     }
 
@@ -332,15 +231,17 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
             return Ok(());
         }
         // commit snapshot by writting final empty page
-        self.fd.write_all(&to_bytes(&BlobHeader::last())?).await?;
+        self.async_f
+            .write_all(&to_bytes(&BlobHeader::last())?)
+            .await?;
         self.blob_count = None;
 
         self.header.snapshot_counter += 1;
-        self.header.eof = self.fd.stream_position().await?;
+        self.header.eof = self.async_f.stream_position().await?;
 
-        Self::write_header(Box::pin(&mut self.fd), &self.header).await?;
-        self.fd.flush().await?;
-        self.fd.as_raw();
+        Self::write_header(Box::pin(&mut self.async_f), &self.header).await?;
+        self.async_f.flush().await?;
+        // self.async_f.as_raw();
         Ok(())
     }
 
@@ -371,9 +272,9 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
                 journal_snapshot_id: self.header.snapshot_counter,
             });
         }
-        self.fd.seek(SeekFrom::Start(self.header.eof)).await?;
-        self.fd.as_writer(self.buffer_sz);
-        self.fd.write_all(&to_bytes(snapshot_header)?).await?;
+        self.async_f.seek(SeekFrom::Start(self.header.eof)).await?;
+        // self.async_f.as_writer(self.buffer_sz);
+        self.async_f.write_all(&to_bytes(snapshot_header)?).await?;
         self.blob_count = Some(0);
         Ok(())
     }
@@ -382,7 +283,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     ///
     /// * seek to start of the file
     /// * write header
-    async fn write_header<W: AsyncWriteExt + AsyncSeekExt >(
+    async fn write_header<W: AsyncWriteExt + AsyncSeekExt>(
         mut fd: Pin<Box<W>>,
         header: &Header,
     ) -> Result<()> {
@@ -402,8 +303,8 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
 
     /// Update journal header
     pub async fn update_header(&mut self) -> Result<()> {
-        self.fd.as_reader(self.buffer_sz);
-        let h = Self::read_header(&mut self.fd).await;
+        // self.async_f.as_reader(self.buffer_sz);
+        let h = Self::read_header(&mut self.async_f).await;
         self.header = h;
         Ok(())
     }
@@ -471,6 +372,7 @@ impl BlobHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn it_works() {
@@ -480,7 +382,7 @@ mod tests {
 
     #[test]
     fn journal_works() {
-        let mut rt = Runtime::new().unwrap();
+        let rt = Runtime::new().unwrap();
 
         // Call the asynchronous function using the `block_on` method
         let result = rt.block_on(async {});
@@ -489,13 +391,15 @@ mod tests {
 
     #[test]
     fn journal_create_works() {
-        let mut rt = Runtime::new().unwrap();
+        let rt = Runtime::new().unwrap();
 
         // Call the asynchronous function using the `block_on` method
         let result = rt.block_on(async {
             let journal = AsyncJournal::create("/tmp/asdf.txt");
             let result = journal.await;
+            println!("{result:?}");
             assert_eq!(result.blob_count, None);
         });
+        println!("{result:?}");
     }
 }
