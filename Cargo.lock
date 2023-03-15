@@ -44,8 +44,11 @@ dependencies = [
  "async-trait",
  "block",
  "chrono",
+ "quickcheck",
  "serde",
  "serde_sqlite",
+ "spin_sleep",
+ "tempfile",
  "tokio",
 ]
 

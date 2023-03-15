@@ -8,7 +8,19 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 type Result<T> = std::result::Result<T, Error>;
 
+pub(crate) const MAGIC: u32 = 0x00907A70;
 const DEFAULT_BUFFER_SIZE: usize = 65536;
+
+impl Default for Header {
+    fn default() -> Self {
+        Self {
+            magic: MAGIC,
+            version: 1,
+            snapshot_counter: 0,
+            eof: <Self as block::Block>::block_size() as u64,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[block(128)]
