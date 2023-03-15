@@ -27,10 +27,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.66"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b84f9ebcc6c1f5b8cb160f6990096a5c127f423fcb6e1ccc46c370cbdfb75dfc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "async_journal"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "block",
+ "chrono",
  "serde",
  "serde_sqlite",
  "tokio",

@@ -1,24 +1,107 @@
 use block::block;
-use std::{path, pin::Pin};
+use std::{
+    io::IoSlice,
+    path,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_sqlite::{from_reader, to_bytes};
-use tokio::runtime::Runtime;
+use tokio::{io::ReadBuf, runtime::Runtime};
 
+use async_trait::async_trait;
+
+use tokio::io::unix::AsyncFd;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter, SeekFrom},
+    io::{
+        AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
+        BufWriter, SeekFrom,
+    },
 };
 
-trait AsyncWriteAndSeekExts: AsyncWriteExt + AsyncSeekExt {}
-
-impl<T: AsyncWriteExt + AsyncSeekExt> AsyncWriteAndSeekExts for T {}
+type Result<T> = std::result::Result<T, Error>;
+type Result2<T> = std::result::Result<T, std::io::Error>;
 
 const DEFAULT_BUFFER_SIZE: usize = 65536;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[block(128)]
-pub struct Header {}
+pub struct Header {
+    /// magic header
+    pub magic: u32,
+    /// journal version
+    pub version: u32,
+    /// operation counter
+    pub snapshot_counter: u64,
+    /// end of last snapshot
+    pub eof: u64,
+}
+
+use serde_sqlite::Error as SerdeSqliteError;
+use std::collections::TryReserveError;
+use std::io::Error as IOError;
+
+#[derive(Debug)]
+pub enum Error {
+    /// std::io::Error
+    IOError(IOError),
+    /// std::collections::TryReserveError
+    TryReserveError(TryReserveError),
+    /// serde_sqlite error
+    SerdeSqliteError(SerdeSqliteError),
+    /// attemt to add out of order snapshot
+    OutOfOrderSnapshot {
+        snapshot_id: u64,
+        journal_snapshot_id: u64,
+    },
+    /// Snapshot not started
+    SnapshotNotStarted,
+    /// Attemt to add out of order blob
+    OutOfOrderBlob {
+        blob_num: u32,
+        blob_count: Option<u32>,
+    },
+    /// Unexpected Journal Version
+    UnexpectedJournalVersion { expected: u32, got: u32 },
+}
+
+impl From<IOError> for Error {
+    fn from(e: IOError) -> Self {
+        Self::IOError(e)
+    }
+}
+
+impl From<TryReserveError> for Error {
+    fn from(e: TryReserveError) -> Self {
+        Self::TryReserveError(e)
+    }
+}
+
+impl From<SerdeSqliteError> for Error {
+    fn from(e: SerdeSqliteError) -> Self {
+        Self::SerdeSqliteError(e)
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl Error {
+    /// Check if error caused by absense of journal
+    pub fn journal_not_exists(&self) -> bool {
+        match self {
+            Self::IOError(e) => e.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
+    }
+}
 
 #[derive(Debug)]
 enum Fd<F, W, R> {
@@ -27,6 +110,84 @@ enum Fd<F, W, R> {
     Reader(R),
     // placeholder state to aid fd mode switching
     Nada,
+}
+
+impl<F> Fd<F, BufWriter<F>, BufReader<F>>
+where
+    F: AsyncRead + AsyncWrite + AsyncSeek,
+{
+    fn as_fd(&mut self) -> F {
+        match std::mem::replace(self, Self::Nada) {
+            Self::Reader(fd) => fd.into_inner(),
+            // Self::Writer(fd) => fd.into_parts().0,
+            Self::Writer(fd) => fd.into_inner(),
+            Self::Raw(fd) => fd,
+            Self::Nada => unreachable!(),
+        }
+    }
+
+    /// Swith Fd to 'raw' mode
+    pub fn as_raw(&mut self) {
+        let fd = self.as_fd();
+        let _ = std::mem::replace(self, Fd::Raw(fd));
+    }
+
+    /// Switch Fd to buffered write mode
+    pub fn as_writer(&mut self, buf_size: usize) {
+        let fd = self.as_fd();
+        // FIXME: re-use buffer
+        let _ = std::mem::replace(self, Fd::Writer(BufWriter::with_capacity(buf_size, fd)));
+    }
+
+    /// Switch Fd to buffered read mode
+    pub fn as_reader(&mut self, buf_size: usize) {
+        let fd = self.as_fd();
+        // FIXME: re-use buffer
+        let _ = std::mem::replace(self, Fd::Reader(BufReader::with_capacity(buf_size, fd)));
+    }
+}
+
+impl<F: AsyncWrite, W: AsyncWrite, R> AsyncWrite for Fd<F, W, R> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result2<usize>> {
+        todo!()
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result2<()>> {
+        todo!()
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result2<()>> {
+        todo!()
+    }
+
+    // Provided methods
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<Result2<usize>> {
+        todo!()
+    }
+    fn is_write_vectored(&self) -> bool {
+        todo!()
+    }
+}
+
+impl<F: AsyncRead, W, R: AsyncRead> AsyncRead for Fd<F, W, R> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>
+    ) -> Poll<Result2<()>> {
+        todo!();
+    }
+}
+
+impl<F: AsyncSeek, W: AsyncSeek, R: AsyncSeek> AsyncSeek for Fd<F, W, R> {
+    fn start_seek(self: Pin<&mut Self>, position: SeekFrom) -> Result2<()> {
+        todo!()
+    }
+    fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result2<u64>> {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
@@ -55,7 +216,17 @@ impl AsyncJournal<tokio::fs::File> {
             .await
             .unwrap();
         // Self::new(Header::default(), fd, None)
-        Self::new(Header {}, fd, None).await
+        Self::new(
+            Header {
+                magic: 0,
+                eof: 0,
+                version: 0,
+                snapshot_counter: 0,
+            },
+            fd,
+            None,
+        )
+        .await
     }
 
     /// Try to instantiate journal from given path
@@ -99,6 +270,80 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
         self.buffer_sz
     }
 
+    /// Initiate new snapshot
+    ///
+    /// * update journal header to correctly setup offset
+    /// * to initiate snapshot we seek to current end of the file (value stored in header)
+    /// * switch fd to buffered mode
+    /// * write snapshot header with current header counter number
+    pub async fn new_snapshot(&mut self, page_size: u32) -> Result<()> {
+        if self.blob_count.is_some() {
+            return Ok(());
+        }
+        self.update_header().await?;
+        let snapshot_header = SnapshotHeader::new(
+            self.header.snapshot_counter,
+            chrono::Utc::now().timestamp_micros(),
+            Some(page_size),
+        );
+        self.write_snapshot(&snapshot_header).await
+    }
+
+    /// Add new blob
+    pub async fn new_blob(&mut self, offset: u64, blob: &[u8]) -> Result<()> {
+        let blob_num = match self.blob_count {
+            Some(c) => c,
+            None => return Err(Error::SnapshotNotStarted),
+        };
+        let blob_header = BlobHeader::new(offset, blob_num, blob.len() as u32);
+        self.add_blob(&blob_header, blob).await
+    }
+
+    /// Add blob
+    pub async fn add_blob(&mut self, blob_header: &BlobHeader, blob: &[u8]) -> Result<()> {
+        if Some(blob_header.blob_num) != self.blob_count {
+            return Err(Error::OutOfOrderBlob {
+                blob_num: blob_header.blob_num,
+                blob_count: self.blob_count,
+            });
+        }
+        self.blob_count.as_mut().map(|x| {
+            *x += 1;
+            *x
+        });
+        self.fd.write_all(&to_bytes(blob_header)?).await?;
+        self.fd.write_all(blob).await?;
+        Ok(())
+    }
+
+    fn snapshot_started(&self) -> bool {
+        self.blob_count.is_some()
+    }
+
+    /// Commit snapshot
+    ///
+    /// * write final empty page to indicate end of snapshot
+    /// * flush bufwriter (seek() on BufWriter will force flush)
+    /// * write new header
+    /// * flush bufwriter
+    /// * switch fd back to raw mode
+    pub async fn commit(&mut self) -> Result<()> {
+        if !self.snapshot_started() {
+            return Ok(());
+        }
+        // commit snapshot by writting final empty page
+        self.fd.write_all(&to_bytes(&BlobHeader::last())?).await?;
+        self.blob_count = None;
+
+        self.header.snapshot_counter += 1;
+        self.header.eof = self.fd.stream_position().await?;
+
+        Self::write_header(Box::pin(&mut self.fd), &self.header).await?;
+        self.fd.flush().await?;
+        self.fd.as_raw();
+        Ok(())
+    }
+
     /// Read header from a given fd
     ///
     /// * seek to start of the file
@@ -107,27 +352,120 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
         fd: &mut R,
     ) -> Header {
         fd.rewind().await.unwrap();
-        Header {}
+        Header {
+            magic: 0,
+            eof: 0,
+            version: 0,
+            snapshot_counter: 0,
+        }
         // from_reader(BufReader::new(fd)).map_err(Into::into).unwrap()
+    }
+
+    /// Write snapshot to journal
+    ///
+    /// This function assumes journal header is up to date
+    async fn write_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
+        if snapshot_header.id != self.header.snapshot_counter {
+            return Err(Error::OutOfOrderSnapshot {
+                snapshot_id: snapshot_header.id,
+                journal_snapshot_id: self.header.snapshot_counter,
+            });
+        }
+        self.fd.seek(SeekFrom::Start(self.header.eof)).await?;
+        self.fd.as_writer(self.buffer_sz);
+        self.fd.write_all(&to_bytes(snapshot_header)?).await?;
+        self.blob_count = Some(0);
+        Ok(())
     }
 
     /// Write header to a given fd
     ///
     /// * seek to start of the file
     /// * write header
-    async fn write_header<W: AsyncWriteAndSeekExts>(
+    async fn write_header<W: AsyncWriteExt + AsyncSeekExt >(
         mut fd: Pin<Box<W>>,
         header: &Header,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<()> {
         fd.seek(SeekFrom::Start(0)).await?;
         let x = to_bytes(header).unwrap();
         fd.write_all(&x).await?;
+        Ok(())
+    }
+
+    /// Return current snapshot counter
+    pub async fn current_snapshot(&self) -> Option<u64> {
+        match self.header.snapshot_counter {
+            0 => None,
+            v => Some(v),
+        }
+    }
+
+    /// Update journal header
+    pub async fn update_header(&mut self) -> Result<()> {
+        self.fd.as_reader(self.buffer_sz);
+        let h = Self::read_header(&mut self.fd).await;
+        self.header = h;
         Ok(())
     }
 }
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[block(32)]
+pub struct SnapshotHeader {
+    pub id: u64,
+    pub timestamp: i64,
+    #[serde(
+        serialize_with = "serde_sqlite::se::none_as_zero",
+        deserialize_with = "serde_sqlite::de::zero_as_none"
+    )]
+    pub page_size: Option<u32>,
+}
+
+impl SnapshotHeader {
+    pub fn new(id: u64, timestamp: i64, page_size: Option<u32>) -> Self {
+        Self {
+            id,
+            timestamp,
+            page_size,
+        }
+    }
+}
+
+/// Blob Header
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[block(16)]
+pub struct BlobHeader {
+    pub offset: u64,
+    pub blob_num: u32,
+    pub blob_size: u32,
+}
+
+impl BlobHeader {
+    fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
+        Self {
+            offset,
+            blob_num,
+            blob_size,
+        }
+    }
+
+    // FIXME: should not be public
+    pub fn last() -> Self {
+        Self {
+            offset: 0,
+            blob_num: 0,
+            blob_size: 0,
+        }
+    }
+
+    // FIXME: should not be public
+    pub fn is_last(&self) -> bool {
+        self.offset == 0 && self.blob_num == 0 && self.blob_size == 0
+    }
 }
 
 #[cfg(test)]
@@ -145,14 +483,19 @@ mod tests {
         let mut rt = Runtime::new().unwrap();
 
         // Call the asynchronous function using the `block_on` method
+        let result = rt.block_on(async {});
+        println!("{result:?}");
+    }
+
+    #[test]
+    fn journal_create_works() {
+        let mut rt = Runtime::new().unwrap();
+
+        // Call the asynchronous function using the `block_on` method
         let result = rt.block_on(async {
             let journal = AsyncJournal::create("/tmp/asdf.txt");
             let result = journal.await;
-            assert_eq!(result.blob_count, None)
+            assert_eq!(result.blob_count, None);
         });
-        println!("{result:?}");
-
-        let result = add(2, 2);
-        assert_eq!(result, 4);
     }
 }
