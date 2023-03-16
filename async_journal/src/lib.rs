@@ -1,10 +1,12 @@
-use block::{Block, block};
+use block::{block, Block};
 use std::{path, pin::Pin};
 
 use serde::{Deserialize, Serialize};
-use serde_sqlite::{to_bytes, from_bytes};
+use serde_sqlite::{from_bytes, to_bytes};
 
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::io::{
+    AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom,
+};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -101,7 +103,7 @@ impl Error {
 #[derive(Debug)]
 pub struct AsyncJournal<F = tokio::fs::File>
 where
-    F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt,
+    F: AsyncRead + AsyncWrite + AsyncSeek,
 {
     /// Journal header
     header: Header,
@@ -140,11 +142,10 @@ impl AsyncJournal<tokio::fs::File> {
     }
 }
 
-impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJournal<F> {
+impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F> {
     /// Instantiate journal & force header write
     pub async fn new(header: Header, mut fd: F, blob_count: Option<u32>) -> Result<Self> {
-        Self::write_header(Box::pin(&mut fd), &header)
-            .await?;
+        Self::write_header(Box::pin(&mut fd), &header).await?;
         Ok(Self::from(header, fd, blob_count))
     }
     /// Instantiate journal
@@ -251,7 +252,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     ///
     /// * seek to start of the file
     /// * read header
-    async fn read_header<R: AsyncReadExt + AsyncSeekExt + std::marker::Unpin>(
+    async fn read_header<R: AsyncRead + AsyncSeek + std::marker::Unpin>(
         fd: &mut R,
     ) -> Result<Header> {
         // println!("read_header");
@@ -285,7 +286,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     ///
     /// * seek to start of the file
     /// * write header
-    async fn write_header<W: AsyncWriteExt + AsyncSeekExt>(
+    async fn write_header<W: AsyncWrite + AsyncSeek>(
         mut fd: Pin<Box<W>>,
         header: &Header,
     ) -> Result<()> {
@@ -409,13 +410,9 @@ mod tests {
     }
 }
 
-
-
-
-
 pub struct IntoIter<'a, F = tokio::fs::File>
 where
-    F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt,
+    F: AsyncRead + AsyncWrite + AsyncSeek,
 {
     journal: &'a mut AsyncJournal<F>,
     current_snapshot: Option<SnapshotHeader>,
@@ -424,7 +421,7 @@ where
     rt: tokio::runtime::Runtime,
 }
 
-impl<'a, F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> IntoIter<'a, F> {
+impl<'a, F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> IntoIter<'a, F> {
     pub fn skip_snapshots(
         self,
         skip: u64,
@@ -436,15 +433,18 @@ impl<'a, F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> In
     }
 }
 
-impl<'a, F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> IntoIterator for &'a mut AsyncJournal<F> {
+impl<'a, F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> IntoIterator
+    for &'a mut AsyncJournal<F>
+{
     type IntoIter = IntoIter<'a, F>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
     fn into_iter<'b>(self) -> Self::IntoIter {
         let eoi = self.header.snapshot_counter == 0;
         let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build().unwrap();
+            .enable_all()
+            .build()
+            .unwrap();
 
         IntoIter {
             journal: self,
@@ -458,20 +458,22 @@ impl<'a, F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> In
 
 impl<'a, F> Iterator for IntoIter<'a, F>
 where
-    F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin,
+    F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin,
 {
     type Item = Result<(SnapshotHeader, BlobHeader, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.initialized {
-            if let Err(e) = self.rt.block_on(
-                self.journal.update_header()
-            ) {
+            if let Err(e) = self.rt.block_on(self.journal.update_header()) {
                 self.eoi = true;
                 return Some(Err(e));
             };
 
-            match self.rt.block_on(self .journal.async_f.seek(SeekFrom::Start(Header::block_size() as u64))) {
+            match self.rt.block_on(
+                self.journal
+                    .async_f
+                    .seek(SeekFrom::Start(Header::block_size() as u64)),
+            ) {
                 Ok(_) => (),
                 Err(e) => {
                     self.eoi = true;
@@ -487,13 +489,13 @@ where
         if self.current_snapshot.is_none() {
             let mut buf: Vec<u8> = Vec::with_capacity(SnapshotHeader::block_size());
             let r = self.rt.block_on(self.journal.async_f.read_buf(&mut buf));
-                // self.journal.async_f.read_to_end(&mut buf).await.unwrap();
+            // self.journal.async_f.read_to_end(&mut buf).await.unwrap();
 
             self.current_snapshot = match r {
                 Ok(_) => {
                     let s = from_bytes::<SnapshotHeader>(&buf).unwrap();
                     Some(s)
-                },
+                }
                 Err(e) => {
                     self.eoi = true;
                     return Some(Err(e.into()));
@@ -506,8 +508,8 @@ where
         let blob_header = match r {
             Ok(_) => {
                 let b: BlobHeader = from_bytes::<BlobHeader>(&buf).unwrap();
-                b 
-            },
+                b
+            }
             Err(e) => {
                 self.eoi = true;
                 return Some(Err(e.into()));
@@ -533,7 +535,10 @@ where
             }
         }
         buf.resize(blob_header.blob_size as usize, 0);
-        match self.rt.block_on(self.journal.async_f.read_exact(buf.as_mut_slice())) {
+        match self
+            .rt
+            .block_on(self.journal.async_f.read_exact(buf.as_mut_slice()))
+        {
             Ok(_) => (),
             Err(e) => {
                 self.eoi = true;

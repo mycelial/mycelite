@@ -72,7 +72,7 @@ impl Arbitrary for TestSnapshot {
 }
 
 #[test]
-fn test_journal_snapshotting() {
+fn test_async_journal_snapshotting() {
     fn check(input: Vec<TestSnapshot>) {
         let rt = tokio::runtime::Builder::new_multi_thread().build().unwrap();
 
