@@ -1,8 +1,8 @@
-use block::block;
+use block::{Block, block};
 use std::{path, pin::Pin};
 
 use serde::{Deserialize, Serialize};
-use serde_sqlite::to_bytes;
+use serde_sqlite::{to_bytes, from_bytes};
 
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
@@ -118,37 +118,34 @@ where
 
 impl AsyncJournal<tokio::fs::File> {
     /// Create new journal
-    pub async fn create<P: AsRef<path::Path>>(p: P) -> Self {
+    pub async fn create<P: AsRef<path::Path>>(p: P) -> Result<Self> {
         let fd = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
             .open(p.as_ref())
-            .await
-            .unwrap();
+            .await?;
         Self::new(Header::default(), fd, None).await
     }
 
     /// Try to instantiate journal from given path
-    pub async fn try_from<P: AsRef<path::Path>>(p: P) -> Self {
+    pub async fn try_from<P: AsRef<path::Path>>(p: P) -> Result<Self> {
         let mut fd = tokio::fs::OpenOptions::new()
             .write(true)
             .read(true)
             .open(p)
-            .await
-            .unwrap();
-        let header = Self::read_header(&mut fd).await;
-        Self::from(header, fd, None)
+            .await?;
+        let header = Self::read_header(&mut fd).await?;
+        Ok(Self::from(header, fd, None))
     }
 }
 
 impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJournal<F> {
     /// Instantiate journal & force header write
-    pub async fn new(header: Header, mut fd: F, blob_count: Option<u32>) -> Self {
+    pub async fn new(header: Header, mut fd: F, blob_count: Option<u32>) -> Result<Self> {
         Self::write_header(Box::pin(&mut fd), &header)
-            .await
-            .unwrap();
-        Self::from(header, fd, blob_count)
+            .await?;
+        Ok(Self::from(header, fd, blob_count))
     }
     /// Instantiate journal
     pub fn from(header: Header, fd: F, blob_count: Option<u32>) -> Self {
@@ -177,6 +174,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     /// * switch fd to buffered mode
     /// * write snapshot header with current header counter number
     pub async fn new_snapshot(&mut self, page_size: u32) -> Result<()> {
+        // println!("new_snapshot");
         if self.blob_count.is_some() {
             return Ok(());
         }
@@ -191,6 +189,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
 
     /// Add new blob
     pub async fn new_blob(&mut self, offset: u64, blob: &[u8]) -> Result<()> {
+        // println!("new_blob");
         let blob_num = match self.blob_count {
             Some(c) => c,
             None => return Err(Error::SnapshotNotStarted),
@@ -201,6 +200,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
 
     /// Add blob
     pub async fn add_blob(&mut self, blob_header: &BlobHeader, blob: &[u8]) -> Result<()> {
+        // println!("add_blob");
         if Some(blob_header.blob_num) != self.blob_count {
             return Err(Error::OutOfOrderBlob {
                 blob_num: blob_header.blob_num,
@@ -228,6 +228,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     /// * flush bufwriter
     /// * switch fd back to raw mode
     pub async fn commit(&mut self) -> Result<()> {
+        // println!("commit");
         if !self.snapshot_started() {
             return Ok(());
         }
@@ -252,14 +253,13 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     /// * read header
     async fn read_header<R: AsyncReadExt + AsyncSeekExt + std::marker::Unpin>(
         fd: &mut R,
-    ) -> Header {
-        fd.rewind().await.unwrap();
-        Header {
-            magic: 0,
-            eof: 0,
-            version: 0,
-            snapshot_counter: 0,
-        }
+    ) -> Result<Header> {
+        // println!("read_header");
+        fd.rewind().await?;
+        let mut buf = Vec::with_capacity(Header::block_size());
+        fd.read_buf(&mut buf).await?;
+
+        from_bytes::<Header>(&buf).map_err(Into::into)
         // from_reader(BufReader::new(fd)).map_err(Into::into).unwrap()
     }
 
@@ -267,6 +267,7 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
     ///
     /// This function assumes journal header is up to date
     async fn write_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
+        // println!("write_snapshot");
         if snapshot_header.id != self.header.snapshot_counter {
             return Err(Error::OutOfOrderSnapshot {
                 snapshot_id: snapshot_header.id,
@@ -288,8 +289,10 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
         mut fd: Pin<Box<W>>,
         header: &Header,
     ) -> Result<()> {
+        // println!("write_header");
         fd.seek(SeekFrom::Start(0)).await?;
-        let x = to_bytes(header).unwrap();
+        let x = to_bytes(header)?;
+        // println!("{header:?}");
         fd.write_all(&x).await?;
         Ok(())
     }
@@ -304,8 +307,9 @@ impl<F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> AsyncJ
 
     /// Update journal header
     pub async fn update_header(&mut self) -> Result<()> {
+        // println!("update_header");
         // self.async_f.as_reader(self.buffer_sz);
-        let h = Self::read_header(&mut self.async_f).await;
+        let h = Self::read_header(&mut self.async_f).await?;
         self.header = h;
         Ok(())
     }
@@ -397,10 +401,149 @@ mod tests {
         // Call the asynchronous function using the `block_on` method
         let result = rt.block_on(async {
             let journal = AsyncJournal::create("/tmp/asdf.txt");
-            let result = journal.await;
-            println!("{result:?}");
+            let result = journal.await.unwrap();
+            // println!("{result:?}");
             assert_eq!(result.blob_count, None);
         });
         println!("{result:?}");
+    }
+}
+
+
+
+
+
+pub struct IntoIter<'a, F = tokio::fs::File>
+where
+    F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt,
+{
+    journal: &'a mut AsyncJournal<F>,
+    current_snapshot: Option<SnapshotHeader>,
+    initialized: bool,
+    eoi: bool,
+    rt: tokio::runtime::Runtime,
+}
+
+impl<'a, F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> IntoIter<'a, F> {
+    pub fn skip_snapshots(
+        self,
+        skip: u64,
+    ) -> impl Iterator<Item = <IntoIter<'a, F> as Iterator>::Item> {
+        self.filter(move |s| match s {
+            Ok((ref snapshot_h, _, _)) => snapshot_h.id >= skip,
+            _ => false,
+        })
+    }
+}
+
+impl<'a, F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin> IntoIterator for &'a mut AsyncJournal<F> {
+    type IntoIter = IntoIter<'a, F>;
+    type Item = <Self::IntoIter as Iterator>::Item;
+
+    fn into_iter<'b>(self) -> Self::IntoIter {
+        let eoi = self.header.snapshot_counter == 0;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build().unwrap();
+
+        IntoIter {
+            journal: self,
+            initialized: false,
+            current_snapshot: None,
+            eoi,
+            rt,
+        }
+    }
+}
+
+impl<'a, F> Iterator for IntoIter<'a, F>
+where
+    F: AsyncReadExt + AsyncWriteExt + AsyncSeekExt + std::marker::Unpin,
+{
+    type Item = Result<(SnapshotHeader, BlobHeader, Vec<u8>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.initialized {
+            if let Err(e) = self.rt.block_on(
+                self.journal.update_header()
+            ) {
+                self.eoi = true;
+                return Some(Err(e));
+            };
+
+            match self.rt.block_on(self .journal.async_f.seek(SeekFrom::Start(Header::block_size() as u64))) {
+                Ok(_) => (),
+                Err(e) => {
+                    self.eoi = true;
+                    return Some(Err(e.into()));
+                }
+            };
+            // self.journal.fd.as_reader(self.journal.buffer_sz);
+            self.initialized = true;
+        }
+        if self.eoi {
+            return None;
+        }
+        if self.current_snapshot.is_none() {
+            let mut buf: Vec<u8> = Vec::with_capacity(SnapshotHeader::block_size());
+            let r = self.rt.block_on(self.journal.async_f.read_buf(&mut buf));
+                // self.journal.async_f.read_to_end(&mut buf).await.unwrap();
+
+            self.current_snapshot = match r {
+                Ok(_) => {
+                    let s = from_bytes::<SnapshotHeader>(&buf).unwrap();
+                    Some(s)
+                },
+                Err(e) => {
+                    self.eoi = true;
+                    return Some(Err(e.into()));
+                }
+            };
+        }
+        let mut buf: Vec<u8> = Vec::with_capacity(BlobHeader::block_size());
+        let r = self.rt.block_on(self.journal.async_f.read_buf(&mut buf));
+
+        let blob_header = match r {
+            Ok(_) => {
+                let b: BlobHeader = from_bytes::<BlobHeader>(&buf).unwrap();
+                b 
+            },
+            Err(e) => {
+                self.eoi = true;
+                return Some(Err(e.into()));
+            }
+        };
+        if blob_header.is_last() {
+            if self.current_snapshot.as_ref().unwrap().id + 1
+                == self.journal.header.snapshot_counter
+            {
+                self.eoi = true;
+                return None;
+            } else {
+                self.current_snapshot = None;
+                return self.next();
+            }
+        }
+        let mut buf = vec![];
+        match buf.try_reserve(blob_header.blob_size as usize) {
+            Ok(_) => (),
+            Err(e) => {
+                self.eoi = true;
+                return Some(Err(e.into()));
+            }
+        }
+        buf.resize(blob_header.blob_size as usize, 0);
+        match self.rt.block_on(self.journal.async_f.read_exact(buf.as_mut_slice())) {
+            Ok(_) => (),
+            Err(e) => {
+                self.eoi = true;
+                return Some(Err(e.into()));
+            }
+        }
+        Some(Ok((
+            self.current_snapshot.as_ref().unwrap().clone(),
+            blob_header,
+            buf,
+        )))
     }
 }
