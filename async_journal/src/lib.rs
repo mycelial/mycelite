@@ -126,18 +126,7 @@ impl AsyncJournal<tokio::fs::File> {
             .open(p.as_ref())
             .await
             .unwrap();
-        // Self::new(Header::default(), fd, None)
-        Self::new(
-            Header {
-                magic: 0,
-                eof: 0,
-                version: 0,
-                snapshot_counter: 0,
-            },
-            fd,
-            None,
-        )
-        .await
+        Self::new(Header::default(), fd, None).await
     }
 
     /// Try to instantiate journal from given path
