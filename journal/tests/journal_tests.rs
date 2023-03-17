@@ -1,5 +1,5 @@
 use block::Block;
-use journal::{Header, Journal, Protocol, Stream};
+use journal::{Header, Journal, AsyncJournal, Protocol, Stream};
 use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 use spin_sleep::sleep;
 use std::cell::UnsafeCell;
@@ -105,6 +105,54 @@ fn test_journal_snapshotting() {
     }
     quickcheck(check as fn(Vec<TestSnapshot>));
 }
+
+#[test]
+fn test_async_journal_snapshotting() {
+    fn check(input: Vec<TestSnapshot>) {
+        let rt = tokio::runtime::Builder::new_multi_thread().build().unwrap();
+
+        // Call the asynchronous function using the `block_on` method
+        let mut result = rt.block_on(async {
+            let mut journal = AsyncJournal::new(Header::default(), Cursor::new(vec![]), None).await.unwrap();
+            for snapshot in input.iter() {
+                for blob in snapshot.blobs.iter() {
+                    // println!("blob: {blob:?}");
+                    journal.new_snapshot(0).await.unwrap();
+                    journal
+                        .new_blob(blob.offset, blob.data.as_slice())
+                        .await
+                        .unwrap();
+                }
+                journal.commit().await.unwrap();
+            }
+            journal
+        });
+        // println!("{result:?}");
+    // iteration over journal always should return same input
+        let restored_input = (&mut result)
+            .into_iter()
+            .map(Result::unwrap)
+            .fold(
+                (vec![], None),
+                |(mut acc, mut snapshot_id), (snapshot_h, blob_h, blob)| {
+                    if snapshot_id != Some(snapshot_h.id) {
+                        snapshot_id = Some(snapshot_h.id);
+                        acc.push(TestSnapshot { blobs: vec![] });
+                    };
+                    acc.last_mut().unwrap().blobs.push(TestBlob {
+                        offset: blob_h.offset,
+                        data: blob,
+                    });
+                    (acc, snapshot_id)
+                },
+            )
+            .0;
+
+        assert_eq!(restored_input, input);
+    }
+    quickcheck(check as fn(Vec<TestSnapshot>));
+}
+
 
 #[derive(Debug, Clone)]
 struct XorShift {
