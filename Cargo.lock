@@ -27,20 +27,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async_journal"
-version = "0.1.0"
-dependencies = [
- "block",
- "chrono",
- "quickcheck",
- "serde",
- "serde_sqlite",
- "spin_sleep",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

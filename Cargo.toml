@@ -3,7 +3,6 @@ members = [
     "block",
     "block_macro",
     "journal",
-    "async_journal",
     "libsqlite-sys",
     "mycelite",
     "page_parser",

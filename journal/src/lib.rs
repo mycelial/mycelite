@@ -1,5 +1,8 @@
 // #[cfg(feature = "async_bridge")]
 mod async_bridge;
+// #[cfg(feature = "async")]
+mod async_journal;
+
 mod error;
 mod journal;
 mod stream;
