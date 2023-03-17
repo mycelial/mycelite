@@ -407,50 +407,37 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::runtime::Runtime;
 
-    #[test]
-    fn journal_create_works() {
-        let rt = Runtime::new().unwrap();
-
-        let result = rt.block_on(async {
-            let future = AsyncJournal::create("/tmp/asdf.txt");
-            let result = future.await;
-            assert!(result.is_ok());
-            let journal = result.unwrap();
-            assert_eq!(journal.blob_count, None);
-            assert_eq!(journal.header, Header::default());
-        });
+    #[tokio::test]
+    async fn journal_create_works() {
+        let future = AsyncJournal::create("/tmp/asdf.txt");
+        let result = future.await;
+        assert!(result.is_ok());
+        let journal = result.unwrap();
+        assert_eq!(journal.blob_count, None);
+        assert_eq!(journal.header, Header::default());
     }
 
-    #[test]
-    fn journal_add_and_commit_works() {
-        let rt = Runtime::new().unwrap();
+    #[tokio::test]
+    async fn journal_add_and_commit_works() {
+        let result = AsyncJournal::create("/tmp/asdf.txt").await;
+        assert!(result.is_ok());
+        let mut journal = result.unwrap();
+        assert_eq!(journal.blob_count, None);
+        assert_eq!(journal.header, Header::default());
 
-        let result = rt.block_on(async {
-            let result = AsyncJournal::create("/tmp/asdf.txt").await;
-            assert!(result.is_ok());
-            let mut journal = result.unwrap();
-            assert_eq!(journal.blob_count, None);
-            assert_eq!(journal.header, Header::default());
+        let result = journal.new_snapshot(10).await;
+        assert!(result.is_ok());
+        let result = journal.new_blob(300, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).await;
+        assert!(result.is_ok());
+        assert_eq!(journal.blob_count, Some(1));
+        assert_eq!(journal.header, Header::default());
 
-            let result = journal.new_snapshot(10).await;
-            assert!(result.is_ok());
-            let result = journal.new_blob(300, &[0,1,2,3,4,5,6,7,8,9]).await;
-            assert!(result.is_ok());
-            assert_eq!(journal.blob_count, Some(1));
-            assert_eq!(journal.header, Header::default());
-
-            let result = journal.commit().await;
-            assert!(result.is_ok());
-            assert_ne!(journal.header, Header::default());
-
-        });
-        println!("{result:?}");
+        let result = journal.commit().await;
+        assert!(result.is_ok());
+        assert_ne!(journal.header, Header::default());
     }
-
 }
