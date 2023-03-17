@@ -10,9 +10,7 @@ block = { path = "../block" }
 tokio = { version = "1", features=["full"]}
 serde_sqlite = { path = "../serde_sqlite" }
 serde = { version = "1", features = ["derive"] }
-async-trait = "0.1.66"
 chrono = { version = "0.4", default-features=false, features = ["std", "clock"] }
-futures = "0.3.27"
 
 [dev-dependencies]
 tempfile = "3"

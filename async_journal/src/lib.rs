@@ -316,10 +316,6 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
     }
 }
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(32)]
 pub struct SnapshotHeader {
@@ -374,42 +370,6 @@ impl BlobHeader {
         self.offset == 0 && self.blob_num == 0 && self.blob_size == 0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::runtime::Runtime;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-
-    #[test]
-    fn journal_works() {
-        let rt = Runtime::new().unwrap();
-
-        // Call the asynchronous function using the `block_on` method
-        let result = rt.block_on(async {});
-        println!("{result:?}");
-    }
-
-    #[test]
-    fn journal_create_works() {
-        let rt = Runtime::new().unwrap();
-
-        // Call the asynchronous function using the `block_on` method
-        let result = rt.block_on(async {
-            let journal = AsyncJournal::create("/tmp/asdf.txt");
-            let result = journal.await.unwrap();
-            // println!("{result:?}");
-            assert_eq!(result.blob_count, None);
-        });
-        println!("{result:?}");
-    }
-}
-
 pub struct IntoIter<'a, F = tokio::fs::File>
 where
     F: AsyncRead + AsyncWrite + AsyncSeek,
@@ -551,4 +511,52 @@ where
             buf,
         )))
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::runtime::Runtime;
+
+    #[test]
+    fn journal_create_works() {
+        let rt = Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let future = AsyncJournal::create("/tmp/asdf.txt");
+            let result = future.await;
+            assert!(result.is_ok());
+            let journal = result.unwrap();
+            assert_eq!(journal.blob_count, None);
+            assert_eq!(journal.header, Header::default());
+        });
+    }
+
+    #[test]
+    fn journal_add_and_commit_works() {
+        let rt = Runtime::new().unwrap();
+
+        let result = rt.block_on(async {
+            let result = AsyncJournal::create("/tmp/asdf.txt").await;
+            assert!(result.is_ok());
+            let mut journal = result.unwrap();
+            assert_eq!(journal.blob_count, None);
+            assert_eq!(journal.header, Header::default());
+
+            let result = journal.new_snapshot(10).await;
+            assert!(result.is_ok());
+            let result = journal.new_blob(300, &[0,1,2,3,4,5,6,7,8,9]).await;
+            assert!(result.is_ok());
+            assert_eq!(journal.blob_count, Some(1));
+            assert_eq!(journal.header, Header::default());
+
+            let result = journal.commit().await;
+            assert!(result.is_ok());
+            assert_ne!(journal.header, Header::default());
+
+        });
+        println!("{result:?}");
+    }
+
 }
