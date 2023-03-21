@@ -1,19 +1,20 @@
 use crate::error::Error;
-use crate::Header;
-use block::{block, Block};
+use crate::{journal::DEFAULT_BUFFER_SIZE, BlobHeader, Header, SnapshotHeader};
+use async_stream::try_stream;
+use block::Block;
+
+use futures::Stream;
 use std::{path, pin::Pin};
 
-use serde::{Deserialize, Serialize};
 use serde_sqlite::{from_bytes, to_bytes};
 
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom,
 };
 
-const DEFAULT_BUFFER_SIZE: usize = 65536;
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct AsyncJournal<F = tokio::fs::File>
 where
     F: AsyncRead + AsyncWrite + AsyncSeek,
@@ -124,6 +125,22 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
         Ok(())
     }
 
+    pub async fn read_blob_header(&mut self) -> Result<BlobHeader> {
+        let mut buf: Vec<u8> = Vec::with_capacity(BlobHeader::block_size());
+        self.fd.read_buf(&mut buf).await?;
+        from_bytes::<BlobHeader>(&buf).map_err(Into::into)
+    }
+
+    pub async fn read_blob(&mut self, size: u32) -> Result<Vec<u8>> {
+        if size == 0 {
+            let result: Vec<u8> = Vec::new();
+            return Ok(result);
+        }
+        let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
+        self.fd.read_buf(&mut buf).await?;
+        Ok(buf)
+    }
+
     fn snapshot_started(&self) -> bool {
         self.blob_count.is_some()
     }
@@ -182,6 +199,13 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
         Ok(())
     }
 
+    pub async fn read_snapshot(&mut self) -> Result<SnapshotHeader> {
+        let mut buf = Vec::with_capacity(SnapshotHeader::block_size());
+        self.fd.read_buf(&mut buf).await?;
+
+        from_bytes::<SnapshotHeader>(&buf).map_err(Into::into)
+    }
+
     /// Write header to a given fd
     ///
     /// * seek to start of the file
@@ -210,205 +234,55 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
         self.header = h;
         Ok(())
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[block(32)]
-pub struct SnapshotHeader {
-    pub id: u64,
-    pub timestamp: i64,
-    #[serde(
-        serialize_with = "serde_sqlite::se::none_as_zero",
-        deserialize_with = "serde_sqlite::de::zero_as_none"
-    )]
-    pub page_size: Option<u32>,
-}
-
-impl SnapshotHeader {
-    pub fn new(id: u64, timestamp: i64, page_size: Option<u32>) -> Self {
-        Self {
-            id,
-            timestamp,
-            page_size,
-        }
-    }
-}
-
-/// Blob Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[block(16)]
-pub struct BlobHeader {
-    pub offset: u64,
-    pub blob_num: u32,
-    pub blob_size: u32,
-}
-
-impl BlobHeader {
-    fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
-        Self {
-            offset,
-            blob_num,
-            blob_size,
-        }
-    }
-
-    // FIXME: should not be public
-    pub fn last() -> Self {
-        Self {
-            offset: 0,
-            blob_num: 0,
-            blob_size: 0,
-        }
-    }
-
-    // FIXME: should not be public
-    pub fn is_last(&self) -> bool {
-        self.offset == 0 && self.blob_num == 0 && self.blob_size == 0
-    }
-}
-pub struct IntoIter<'a, F = tokio::fs::File>
-where
-    F: AsyncRead + AsyncWrite + AsyncSeek,
-{
-    journal: &'a mut AsyncJournal<F>,
-    current_snapshot: Option<SnapshotHeader>,
-    initialized: bool,
-    eoi: bool,
-    rt: tokio::runtime::Runtime,
-}
-
-impl<'a, F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> IntoIter<'a, F> {
-    pub fn skip_snapshots(
-        self,
-        skip: u64,
-    ) -> impl Iterator<Item = <IntoIter<'a, F> as Iterator>::Item> {
-        self.filter(move |s| match s {
-            Ok((ref snapshot_h, _, _)) => snapshot_h.id >= skip,
-            _ => false,
-        })
-    }
-}
-
-impl<'a, F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> IntoIterator
-    for &'a mut AsyncJournal<F>
-{
-    type IntoIter = IntoIter<'a, F>;
-    type Item = <Self::IntoIter as Iterator>::Item;
-
-    fn into_iter<'b>(self) -> Self::IntoIter {
-        let eoi = self.header.snapshot_counter == 0;
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        IntoIter {
-            journal: self,
-            initialized: false,
-            current_snapshot: None,
-            eoi,
-            rt,
-        }
-    }
-}
-
-impl<'a, F> Iterator for IntoIter<'a, F>
-where
-    F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin,
-{
-    type Item = Result<(SnapshotHeader, BlobHeader, Vec<u8>)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if !self.initialized {
-            if let Err(e) = self.rt.block_on(self.journal.update_header()) {
-                self.eoi = true;
-                return Some(Err(e));
-            };
-
-            match self.rt.block_on(
-                self.journal
-                    .fd
-                    .seek(SeekFrom::Start(Header::block_size() as u64)),
-            ) {
-                Ok(_) => (),
-                Err(e) => {
-                    self.eoi = true;
-                    return Some(Err(e.into()));
+    pub fn stream(
+        &mut self,
+    ) -> impl Stream<Item = Result<Option<(SnapshotHeader, BlobHeader, Vec<u8>)>>> + '_ {
+        let mut initialized = false;
+        let mut eoi = false;
+        try_stream! {
+            loop {
+                // step 1: early exit
+                if eoi {
+                    yield None
                 }
-            };
-            self.initialized = true;
-        }
-        if self.eoi {
-            return None;
-        }
-        if self.current_snapshot.is_none() {
-            let mut buf: Vec<u8> = Vec::with_capacity(SnapshotHeader::block_size());
-            let r = self.rt.block_on(self.journal.fd.read_buf(&mut buf));
-
-            self.current_snapshot = match r {
-                Ok(_) => {
-                    let s = from_bytes::<SnapshotHeader>(&buf).unwrap();
-                    Some(s)
+                // step 1: update header.
+                if !initialized {
+                    self.update_header().await?;
+                    initialized = true;
                 }
-                Err(e) => {
-                    self.eoi = true;
-                    return Some(Err(e.into()));
-                }
-            };
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(BlobHeader::block_size());
-        let r = self.rt.block_on(self.journal.fd.read_buf(&mut buf));
 
-        let blob_header = match r {
-            Ok(_) => {
-                let b: BlobHeader = from_bytes::<BlobHeader>(&buf).unwrap();
-                b
-            }
-            Err(e) => {
-                self.eoi = true;
-                return Some(Err(e.into()));
-            }
-        };
-        if blob_header.is_last() {
-            if self.current_snapshot.as_ref().unwrap().id + 1
-                == self.journal.header.snapshot_counter
-            {
-                self.eoi = true;
-                return None;
-            } else {
-                self.current_snapshot = None;
-                return self.next();
-            }
-        }
-        let mut buf = vec![];
-        match buf.try_reserve(blob_header.blob_size as usize) {
-            Ok(_) => (),
-            Err(e) => {
-                self.eoi = true;
-                return Some(Err(e.into()));
+                // step 2: read snapshot header
+                let snapshot_header = self.read_snapshot().await?;
+
+                loop {
+                    // step 3: read blob header
+                    let blob_header = self.read_blob_header().await?;
+
+                    if !blob_header.is_last() {
+                        // step 4: read the blob bytes
+                        let blob = self.read_blob(blob_header.blob_size).await?;
+
+                        // step 5: yield the results
+                        yield Some((snapshot_header, blob_header, blob))
+                    } else {
+                        if snapshot_header.id + 1 == self.header.snapshot_counter {
+                            eoi = true;
+                            yield None
+                        } else {
+                            break
+                        }
+                    }
+                }
             }
         }
-        buf.resize(blob_header.blob_size as usize, 0);
-        match self
-            .rt
-            .block_on(self.journal.fd.read_exact(buf.as_mut_slice()))
-        {
-            Ok(_) => (),
-            Err(e) => {
-                self.eoi = true;
-                return Some(Err(e.into()));
-            }
-        }
-        Some(Ok((
-            self.current_snapshot.as_ref().unwrap().clone(),
-            blob_header,
-            buf,
-        )))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
     use super::*;
 
     #[tokio::test]
@@ -419,6 +293,44 @@ mod tests {
         let journal = result.unwrap();
         assert_eq!(journal.blob_count, None);
         assert_eq!(journal.header, Header::default());
+    }
+
+    async fn get_test_journal() -> AsyncJournal {
+        let j = AsyncJournal::create("/tmp/asdf.txt").await;
+        assert!(j.is_ok());
+        let mut journal = j.unwrap();
+        assert_eq!(journal.blob_count, None);
+        assert_eq!(journal.header, Header::default());
+
+        let result = journal.new_snapshot(10).await;
+        assert!(result.is_ok());
+        let result = journal.new_blob(1, &[1, 1, 1]).await;
+        assert!(result.is_ok());
+        assert_eq!(journal.blob_count, Some(1));
+        let result = journal.new_blob(2, &[2, 2, 2]).await;
+        assert!(result.is_ok());
+        assert_eq!(journal.blob_count, Some(2));
+        let result = journal.new_blob(3, &[3, 3, 3]).await;
+        assert!(result.is_ok());
+        assert_eq!(journal.blob_count, Some(3));
+        let result = journal.new_blob(4, &[4, 4, 4]).await;
+        assert!(result.is_ok());
+        assert_eq!(journal.blob_count, Some(4));
+        assert_eq!(journal.header, Header::default());
+
+        let result = journal.commit().await;
+        assert!(result.is_ok());
+
+        let result = journal.new_snapshot(10).await;
+        assert!(result.is_ok());
+        let result = journal.new_blob(5, &[5, 5, 5]).await;
+        assert!(result.is_ok());
+        let result = journal.new_blob(6, &[6, 6, 6]).await;
+        assert!(result.is_ok());
+
+        let result = journal.commit().await;
+        assert!(result.is_ok());
+        journal
     }
 
     #[tokio::test]

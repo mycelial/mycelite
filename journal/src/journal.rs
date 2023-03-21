@@ -9,7 +9,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path;
 
 pub(crate) const MAGIC: u32 = 0x00907A70;
-const DEFAULT_BUFFER_SIZE: usize = 65536;
+pub(crate) const DEFAULT_BUFFER_SIZE: usize = 65536;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -175,7 +175,6 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * switch fd to buffered mode
     /// * write snapshot header with current header counter number
     pub fn new_snapshot(&mut self, page_size: u32) -> Result<()> {
-        // println!("new_snapshot");
         if self.blob_count.is_some() {
             return Ok(());
         }
@@ -190,7 +189,6 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Add new blob
     pub fn new_blob(&mut self, offset: u64, blob: &[u8]) -> Result<()> {
-        // println!("new_blob");
         let blob_num = match self.blob_count {
             Some(c) => c,
             None => return Err(Error::SnapshotNotStarted),
@@ -203,7 +201,6 @@ impl<F: Read + Write + Seek> Journal<F> {
     ///
     /// Re-syncs journal header
     pub fn add_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
-        // println!("add_snapshot");
         self.update_header()?;
         self.write_snapshot(snapshot_header)
     }
@@ -212,7 +209,6 @@ impl<F: Read + Write + Seek> Journal<F> {
     ///
     /// This function assumes journal header is up to date
     fn write_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
-        // println!("write_snapshot");
         if snapshot_header.id != self.header.snapshot_counter {
             return Err(Error::OutOfOrderSnapshot {
                 snapshot_id: snapshot_header.id,
@@ -228,7 +224,6 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Add blob
     pub fn add_blob(&mut self, blob_header: &BlobHeader, blob: &[u8]) -> Result<()> {
-        // println!("add_blob");
         if Some(blob_header.blob_num) != self.blob_count {
             return Err(Error::OutOfOrderBlob {
                 blob_num: blob_header.blob_num,
@@ -252,7 +247,6 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * flush bufwriter
     /// * switch fd back to raw mode
     pub fn commit(&mut self) -> Result<()> {
-        // println!("commit");
         if !self.snapshot_started() {
             return Ok(());
         }
@@ -284,7 +278,6 @@ impl<F: Read + Write + Seek> Journal<F> {
 
     /// Update journal header
     pub fn update_header(&mut self) -> Result<()> {
-        // println!("update_header");
         self.fd.as_reader(self.buffer_sz);
         self.header = Self::read_header(&mut self.fd)?;
         Ok(())
@@ -295,11 +288,8 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * seek to start of the file
     /// * read header
     fn read_header<R: Read + Seek>(fd: &mut R) -> Result<Header> {
-        // println!("read_header");
         fd.rewind()?;
-        let header = from_reader(BufReader::new(fd)).map_err(Into::into);
-        // println!("{header:?}");
-        header
+        from_reader(BufReader::new(fd)).map_err(Into::into)
     }
 
     /// Write header to a given fd
@@ -307,9 +297,7 @@ impl<F: Read + Write + Seek> Journal<F> {
     /// * seek to start of the file
     /// * write header
     fn write_header<W: Write + Seek>(fd: &mut W, header: &Header) -> Result<()> {
-        // println!("write_header");
         fd.rewind()?;
-        // println!("{header:?}");
         fd.write_all(&to_bytes(header)?).map_err(Into::into)
     }
 
@@ -438,7 +426,7 @@ where
 }
 
 /// Journal Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 #[block(128)]
 pub struct Header {
     /// magic header
@@ -463,7 +451,7 @@ impl Default for Header {
 }
 
 /// Transaction Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(32)]
 pub struct SnapshotHeader {
     pub id: u64,
@@ -486,7 +474,7 @@ impl SnapshotHeader {
 }
 
 /// Blob Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(16)]
 pub struct BlobHeader {
     pub offset: u64,
@@ -495,7 +483,7 @@ pub struct BlobHeader {
 }
 
 impl BlobHeader {
-    fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
+    pub fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
         Self {
             offset,
             blob_num,

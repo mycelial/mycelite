@@ -16,6 +16,10 @@ chrono = { version = "0.4", default-features=false, features = ["std", "clock"] 
 serde_sqlite = { path = "../serde_sqlite" }
 # tokio = { version = "1", optional = true, features=["full"]}
 tokio = { version = "1", features=["full"]}
+futures = "0.3.27"
+tokio-stream = "0.1.12"
+async-stream = "0.3.4"
+async-trait = "0.1.66"
 
 [dev-dependencies]
 tempfile = "3"
