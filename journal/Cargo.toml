@@ -6,23 +6,20 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = []
-# async = ["dep:tokio"]
-# async_bridge = ["dep:tokio"]
+async = ["dep:tokio", "dep:futures", "dep:tokio-stream", "dep:async-stream"]
+async_bridge = ["dep:tokio"]
 
 [dependencies]
 block = { path = "../block" }
 serde = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", default-features=false, features = ["std", "clock"] }
 serde_sqlite = { path = "../serde_sqlite" }
-# tokio = { version = "1", optional = true, features=["full"]}
-tokio = { version = "1", features=["full"]}
-futures = "0.3.27"
-tokio-stream = "0.1.12"
-async-stream = "0.3.4"
-async-trait = "0.1.66"
+tokio = { version = "1", optional = true, features=["full"]}
+futures = {version = "0.3.27", optional = true}
+tokio-stream = { version = "0.1.12", optional = true }
+async-stream = { version = "0.3.4", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 quickcheck = "1"
 spin_sleep = "1"
-

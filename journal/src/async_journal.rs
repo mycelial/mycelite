@@ -281,8 +281,6 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
-
     use super::*;
 
     #[tokio::test]
@@ -293,44 +291,6 @@ mod tests {
         let journal = result.unwrap();
         assert_eq!(journal.blob_count, None);
         assert_eq!(journal.header, Header::default());
-    }
-
-    async fn get_test_journal() -> AsyncJournal {
-        let j = AsyncJournal::create("/tmp/asdf.txt").await;
-        assert!(j.is_ok());
-        let mut journal = j.unwrap();
-        assert_eq!(journal.blob_count, None);
-        assert_eq!(journal.header, Header::default());
-
-        let result = journal.new_snapshot(10).await;
-        assert!(result.is_ok());
-        let result = journal.new_blob(1, &[1, 1, 1]).await;
-        assert!(result.is_ok());
-        assert_eq!(journal.blob_count, Some(1));
-        let result = journal.new_blob(2, &[2, 2, 2]).await;
-        assert!(result.is_ok());
-        assert_eq!(journal.blob_count, Some(2));
-        let result = journal.new_blob(3, &[3, 3, 3]).await;
-        assert!(result.is_ok());
-        assert_eq!(journal.blob_count, Some(3));
-        let result = journal.new_blob(4, &[4, 4, 4]).await;
-        assert!(result.is_ok());
-        assert_eq!(journal.blob_count, Some(4));
-        assert_eq!(journal.header, Header::default());
-
-        let result = journal.commit().await;
-        assert!(result.is_ok());
-
-        let result = journal.new_snapshot(10).await;
-        assert!(result.is_ok());
-        let result = journal.new_blob(5, &[5, 5, 5]).await;
-        assert!(result.is_ok());
-        let result = journal.new_blob(6, &[6, 6, 6]).await;
-        assert!(result.is_ok());
-
-        let result = journal.commit().await;
-        assert!(result.is_ok());
-        journal
     }
 
     #[tokio::test]

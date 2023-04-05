@@ -1,13 +1,13 @@
 use block::Block;
-use futures::pin_mut;
-use journal::{AsyncJournal, Header, Journal, Protocol, Stream};
+use journal::{Header, Journal, Protocol, Stream};
 use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
 use spin_sleep::sleep;
 use std::cell::UnsafeCell;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio_stream::StreamExt;
+#[cfg(feature = "async")]
+use {futures::pin_mut, journal::AsyncJournal, tokio_stream::StreamExt};
 
 #[test]
 fn test_journal_not_exists() {
@@ -108,6 +108,7 @@ fn test_journal_snapshotting() {
     quickcheck(check as fn(Vec<TestSnapshot>));
 }
 
+#[cfg(feature = "async")]
 #[test]
 fn test_async_journal_snapshotting() {
     fn check(input: Vec<TestSnapshot>) {
@@ -585,7 +586,7 @@ fn test_journal_concurrent_updates() {
     quickcheck(check as fn(usize, XorShift) -> TestResult)
 }
 
-
+#[cfg(feature = "async")]
 #[test]
 fn test_async_journal_and_sync_journal_are_the_same() {
     // put the same things into a regular journal and an async journal.
@@ -669,5 +670,4 @@ fn test_async_journal_and_sync_journal_are_the_same() {
     }
 
     quickcheck(check as fn(Vec<TestSnapshot>));
-
 }
