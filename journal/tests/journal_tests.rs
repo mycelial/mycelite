@@ -137,7 +137,7 @@ fn test_async_journal_snapshotting() {
             let stream = result.stream();
             pin_mut!(stream);
             let mut last_snapshot_header_id: Option<u64> = None;
-            while let Some(Ok(Some((snapshot_h, blob_h, blob)))) = stream.next().await {
+            while let Some(Ok((snapshot_h, blob_h, blob))) = stream.next().await {
                 if last_snapshot_header_id != Some(snapshot_h.id) {
                     last_snapshot_header_id = Some(snapshot_h.id);
                     restored_input.push(TestSnapshot { blobs: vec![] });
@@ -647,7 +647,7 @@ fn test_async_journal_and_sync_journal_are_the_same() {
             let stream = result.stream();
             pin_mut!(stream);
             let mut last_snapshot_header_id: Option<u64> = None;
-            while let Some(Ok(Some((snapshot_h, blob_h, blob)))) = stream.next().await {
+            while let Some(Ok((snapshot_h, blob_h, blob))) = stream.next().await {
                 if last_snapshot_header_id != Some(snapshot_h.id) {
                     last_snapshot_header_id = Some(snapshot_h.id);
                     restored_input.push(TestSnapshot { blobs: vec![] });

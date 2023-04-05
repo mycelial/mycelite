@@ -237,14 +237,14 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
 
     pub fn stream(
         &mut self,
-    ) -> impl Stream<Item = Result<Option<(SnapshotHeader, BlobHeader, Vec<u8>)>>> + '_ {
+    ) -> impl Stream<Item = Result<(SnapshotHeader, BlobHeader, Vec<u8>)>> + '_ {
         let mut initialized = false;
         let mut eoi = false;
         try_stream! {
             loop {
                 // step 1: early exit
                 if eoi {
-                    yield None
+                    break
                 }
                 // step 1: update header.
                 if !initialized {
@@ -264,14 +264,12 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
                         let blob = self.read_blob(blob_header.blob_size).await?;
 
                         // step 5: yield the results
-                        yield Some((snapshot_header, blob_header, blob))
+                        yield (snapshot_header, blob_header, blob)
                     } else {
                         if snapshot_header.id + 1 == self.header.snapshot_counter {
                             eoi = true;
-                            yield None
-                        } else {
-                            break
                         }
+                        break
                     }
                 }
             }
