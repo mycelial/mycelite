@@ -6,6 +6,8 @@ use std::cell::UnsafeCell;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+#[cfg(feature = "async")]
+use {futures::pin_mut, journal::AsyncJournal, tokio_stream::StreamExt};
 
 #[test]
 fn test_journal_not_exists() {
@@ -101,6 +103,53 @@ fn test_journal_snapshotting() {
                 },
             )
             .0;
+        assert_eq!(restored_input, input);
+    }
+    quickcheck(check as fn(Vec<TestSnapshot>));
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn test_async_journal_snapshotting() {
+    fn check(input: Vec<TestSnapshot>) {
+        let rt = tokio::runtime::Builder::new_multi_thread().build().unwrap();
+
+        // Call the asynchronous function using the `block_on` method
+        let mut result = rt.block_on(async {
+            let mut journal = AsyncJournal::new(Header::default(), Cursor::new(vec![]), None)
+                .await
+                .unwrap();
+            for snapshot in input.iter() {
+                for blob in snapshot.blobs.iter() {
+                    journal.new_snapshot(0).await.unwrap();
+                    journal
+                        .new_blob(blob.offset, blob.data.as_slice())
+                        .await
+                        .unwrap();
+                }
+                journal.commit().await.unwrap();
+            }
+            journal
+        });
+        // iteration over journal always should return same input
+        let restored_input = rt.block_on(async {
+            let mut restored_input: Vec<TestSnapshot> = Vec::new();
+            let stream = result.stream();
+            pin_mut!(stream);
+            let mut last_snapshot_header_id: Option<u64> = None;
+            while let Some(Ok((snapshot_h, blob_h, blob))) = stream.next().await {
+                if last_snapshot_header_id != Some(snapshot_h.id) {
+                    last_snapshot_header_id = Some(snapshot_h.id);
+                    restored_input.push(TestSnapshot { blobs: vec![] });
+                }
+                restored_input.last_mut().unwrap().blobs.push(TestBlob {
+                    offset: blob_h.offset,
+                    data: blob,
+                });
+            }
+            restored_input
+        });
+
         assert_eq!(restored_input, input);
     }
     quickcheck(check as fn(Vec<TestSnapshot>));
@@ -535,4 +584,90 @@ fn test_journal_concurrent_updates() {
         TestResult::from_bool(true)
     }
     quickcheck(check as fn(usize, XorShift) -> TestResult)
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn test_async_journal_and_sync_journal_are_the_same() {
+    // put the same things into a regular journal and an async journal.
+    fn check_regular(input: Vec<TestSnapshot>) {
+        let mut journal = Journal::new(Header::default(), Cursor::new(vec![]), None).unwrap();
+        for snapshot in input.iter() {
+            for blob in snapshot.blobs.iter() {
+                journal.new_snapshot(0).unwrap();
+                journal.new_blob(blob.offset, blob.data.as_slice()).unwrap();
+            }
+            journal.commit().unwrap();
+        }
+        // iteration over journal always should return same input
+        let restored_input = (&mut journal)
+            .into_iter()
+            .map(Result::unwrap)
+            .fold(
+                (vec![], None),
+                |(mut acc, mut snapshot_id), (snapshot_h, blob_h, blob)| {
+                    if snapshot_id != Some(snapshot_h.id) {
+                        snapshot_id = Some(snapshot_h.id);
+                        acc.push(TestSnapshot { blobs: vec![] });
+                    };
+                    acc.last_mut().unwrap().blobs.push(TestBlob {
+                        offset: blob_h.offset,
+                        data: blob,
+                    });
+                    (acc, snapshot_id)
+                },
+            )
+            .0;
+        assert_eq!(restored_input, input);
+    }
+
+    fn check_async(input: Vec<TestSnapshot>) {
+        let rt = tokio::runtime::Builder::new_multi_thread().build().unwrap();
+
+        // Call the asynchronous function using the `block_on` method
+        let mut result = rt.block_on(async {
+            let mut async_journal = AsyncJournal::new(Header::default(), Cursor::new(vec![]), None)
+                .await
+                .unwrap();
+            for snapshot in input.iter() {
+                for blob in snapshot.blobs.iter() {
+                    async_journal.new_snapshot(0).await.unwrap();
+                    async_journal
+                        .new_blob(blob.offset, blob.data.as_slice())
+                        .await
+                        .unwrap();
+                }
+                async_journal.commit().await.unwrap();
+            }
+            async_journal
+        });
+        // iteration over journal always should return same input
+        let restored_input = rt.block_on(async {
+            let mut restored_input: Vec<TestSnapshot> = Vec::new();
+            let stream = result.stream();
+            pin_mut!(stream);
+            let mut last_snapshot_header_id: Option<u64> = None;
+            while let Some(Ok((snapshot_h, blob_h, blob))) = stream.next().await {
+                if last_snapshot_header_id != Some(snapshot_h.id) {
+                    last_snapshot_header_id = Some(snapshot_h.id);
+                    restored_input.push(TestSnapshot { blobs: vec![] });
+                }
+                restored_input.last_mut().unwrap().blobs.push(TestBlob {
+                    offset: blob_h.offset,
+                    data: blob,
+                });
+            }
+            restored_input
+        });
+
+        assert_eq!(restored_input, input);
+    }
+
+    fn check(input: Vec<TestSnapshot>) {
+        let input_clone = input.clone();
+        check_async(input);
+        check_regular(input_clone);
+    }
+
+    quickcheck(check as fn(Vec<TestSnapshot>));
 }

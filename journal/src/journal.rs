@@ -9,7 +9,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path;
 
 pub(crate) const MAGIC: u32 = 0x00907A70;
-const DEFAULT_BUFFER_SIZE: usize = 65536;
+pub(crate) const DEFAULT_BUFFER_SIZE: usize = 65536;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -426,7 +426,7 @@ where
 }
 
 /// Journal Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 #[block(128)]
 pub struct Header {
     /// magic header
@@ -451,7 +451,7 @@ impl Default for Header {
 }
 
 /// Transaction Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(32)]
 pub struct SnapshotHeader {
     pub id: u64,
@@ -474,7 +474,7 @@ impl SnapshotHeader {
 }
 
 /// Blob Header
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[block(16)]
 pub struct BlobHeader {
     pub offset: u64,
@@ -483,7 +483,7 @@ pub struct BlobHeader {
 }
 
 impl BlobHeader {
-    fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
+    pub fn new(offset: u64, blob_num: u32, blob_size: u32) -> Self {
         Self {
             offset,
             blob_num,
