@@ -99,7 +99,7 @@ impl AsyncRead for AsyncReadJournalStreamHandle {
         if p.buf.is_none() {
             match p.rx.try_recv() {
                 // EOF
-                Ok(buf) if buf.len() == 0 => return Poll::Ready(Ok(())),
+                Ok(buf) if buf.is_empty() => return Poll::Ready(Ok(())),
                 Ok(buf) => {
                     p.buf = Some(buf);
                     p.read = 0;
@@ -180,7 +180,9 @@ impl BufRead for ReadReceiver {
 
         loop {
             // wake up future
-            self.waker.take().map(|waker| waker.wake());
+            if let Some(waker) = self.waker.take() {
+                waker.wake()
+            }
             match self.rx.blocking_recv() {
                 Some(AsyncWriteProto::W(waker)) => {
                     self.waker = Some(waker);
@@ -234,7 +236,9 @@ impl Read for ReadReceiver {
 impl Drop for ReadReceiver {
     fn drop(&mut self) {
         self.rx.close();
-        self.waker.take().map(|waker| waker.wake());
+        if let Some(waker) = self.waker.take() {
+            waker.wake()
+        }
         while let Ok(message) = self.rx.try_recv() {
             if let AsyncWriteProto::W(waker) = message {
                 waker.wake()
@@ -337,9 +341,11 @@ impl AsyncWrite for AsyncWriteJournalStreamHandle {
         let me = self.get_mut();
         match me.rx.try_recv() {
             Err(TryRecvError::Empty) => {
-                me.tx
-                    .try_send(AsyncWriteProto::W(ctx.waker().clone()))
-                    .map_err(to_err)?;
+                match me.tx.try_send(AsyncWriteProto::W(ctx.waker().clone())) {
+                    Ok(_) => (),
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => (),
+                    Err(e) => return Poll::Ready(Err(to_err(e))),
+                }
                 Poll::Pending
             }
             Err(e @ TryRecvError::Disconnected) => Poll::Ready(Err(to_err(e))),

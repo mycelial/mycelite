@@ -418,7 +418,7 @@ where
             }
         }
         Some(Ok((
-            self.current_snapshot.as_ref().unwrap().clone(),
+            *self.current_snapshot.as_ref().unwrap(),
             blob_header,
             buf,
         )))
