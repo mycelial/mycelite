@@ -98,6 +98,15 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
         self.write_snapshot(&snapshot_header).await
     }
 
+
+    /// Add existing snapshot
+    ///
+    /// Re-syncs journal header
+    pub async fn add_snapshot(&mut self, snapshot_header: &SnapshotHeader) -> Result<()> {
+        self.update_header().await?;
+        self.write_snapshot(snapshot_header).await
+    }
+
     /// Add new blob
     pub async fn new_blob(&mut self, offset: u64, blob: &[u8]) -> Result<()> {
         let blob_num = match self.blob_count {
@@ -233,6 +242,10 @@ impl<F: AsyncRead + AsyncWrite + AsyncSeek + std::marker::Unpin> AsyncJournal<F>
         let h = Self::read_header(&mut self.fd).await?;
         self.header = h;
         Ok(())
+    }
+
+    pub fn get_header(&self) -> &Header {
+        &self.header
     }
 
     pub fn stream(

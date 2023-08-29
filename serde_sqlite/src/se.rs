@@ -1,4 +1,4 @@
-///! Sqlite data format serializer
+//! Sqlite data format serializer
 use crate::error::Error;
 use block::Block;
 use serde::{
