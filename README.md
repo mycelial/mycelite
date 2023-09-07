@@ -2,13 +2,49 @@
 
 # Mycelite
 
-## What is Mycelite?
+Mycelite implements physical single-master replication for SQLite. 
 
-Mycelite is a SQLite extension that allows you to synchronize changes from one
-instance of SQLite to another. Currently, it only supports one-way
-synchronization, but eventually, it will support two-way synchronization.
+### Technical details
 
-Why would you want to synchronize multiple SQLite databases? Read on to learn.
+- Mycelite is a [VFS](https://www.sqlite.org/vfs.html) extension, which acts 
+as a proxy for OS filesystem. 
+- It intercepts page writes and creates a binary diff with the old version. 
+- The binary diffs are then stored in the [journal](./journal/README.md). They can also be sent
+over the network to another machine.
+- The diffs in the journal can then be sequentially applied, thus achieving 
+bit-perfect copy of the original database.
+
+For more details on SQLite binary format see [sqlite-parser-nom](https://github.com/mycelial/sqlite-parser-nom).
+In principle, it could be illustrated in the following way:
+
+```
+┌───────────┐ VFS write                     ┌────────────┐ apply ┌────────────────┐
+│ db.sqlite ├──────────┐                    │ db.journal ├───────► replica.sqlite │
+├───────────┤          │                    ├────────────┤       ├────────────────┤
+│  header   │   ┌──────▼─────┐            ┌─►  diff 0    │       │    header      │
+├───────────┤   │ page 0 new ├─┐          │ ├────────────┤       ├────────────────┤
+│  page 0   ├─┐ └────────────┘ │ ┌──────┐ │ │    ...     │       │    page 0      │
+├───────────┤ │                ├─► diff ├─┘ └────────────┘       ├────────────────┤
+│  page 1   │ │ ┌────────────┐ │ └──────┘                        │      ...       │
+└───────────┘ └─► page 0 old ├─┘                                 └────────────────┘
+                └────────────┘
+```
+
+This approach comes with both significant upsides and downsides:
+- Replica will contain exactly the same object in exactly the same order as in original.
+- It supports non-deterministic DDLs out-of-the-box (eg UPDATE with RANDOM() 
+or CURRENT_TIMESTAMP)
+- Physical replication is less resource-intensive than logical one resulting in
+higher throughput with no penalty on number of replicas.
+- It's possible to time travel by hydrating until a certain timestamp.
+- As there is no locking mechanism currently implemented only single master is supported.
+- Replica journal grows linearly, unless compacted.
+- VACUUM operation might result in significantly sized journal entry without 
+actual changes to accessible data.
+- [WAL](https://www.sqlite.org/wal.html)-enabled databases currently are not supported.
+
+### Usage
+Refer to the [Documentation](https://mycelial.com/docs/get-started/quick-start).
 
 ### A new type of application
 
@@ -44,5 +80,3 @@ that implements and uses
 this start-from-scratch approach just isn't practical for most situations.
 Building local-first applications today is too difficult, but we're going to
 change that.
-
-## [Documentation](https://mycelial.com/docs/get-started/quick-start)
