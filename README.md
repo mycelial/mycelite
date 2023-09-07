@@ -32,19 +32,18 @@ In principle, it could be illustrated in the following way:
 
 This approach comes with both significant upsides and downsides:
 - Replica will contain exactly the same object in exactly the same order as in original.
-- It supports non-deterministic DDLs out-of-the-box (eg UPDATE with RANDOM() 
-or CURRENT_TIMESTAMP)
-- Physical replication is less resource-intensive than logical one resulting in
-higher throughput with no penalty on number of replicas.
-- It's possible to time travel by hydrating until a certain timestamp.
-- As there is no locking mechanism currently implemented only single master is supported.
+- Out-of-the-box non-deterministic DDLs (e.g., UPDATE with RANDOM() or CURRENT_TIMESTAMP).
+- Physical replication is less resource-intensive than logical replication, resulting in
+higher throughput with no penalty as the number of replicas grows.
+- Time travel by hydrating up to any previous timestamp.
+- As there is no locking mechanism currently implemented, only a single writer is supported.
 - Replica journal grows linearly, unless compacted.
 - VACUUM operation might result in significantly sized journal entry without 
 actual changes to accessible data.
-- [WAL](https://www.sqlite.org/wal.html)-enabled databases currently are not supported.
+- Currently, [WAL](https://www.sqlite.org/wal.html)-enabled databases are not supported.
 
 ### Usage
-Refer to the [Documentation](https://mycelial.com/docs/get-started/quick-start).
+Refer to the [Quickstart Documentation](https://mycelial.com/docs/get-started/quick-start).
 
 ### A new type of application
 
