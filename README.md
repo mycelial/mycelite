@@ -7,8 +7,8 @@ Mycelite implements physical single-master replication for SQLite.
 ### Technical details
 
 - Mycelite is a [VFS](https://www.sqlite.org/vfs.html) extension, which acts 
-as a proxy for OS filesystem. 
-- It intercepts page writes and creates a binary diff with the old version. 
+as a proxy for the OS filesystem. 
+- Mycelite intercepts page writes and creates a binary diff with the old version. 
 - The binary diffs are then stored in the [journal](./journal/README.md). They can also be sent
 over the network to another machine.
 - The diffs in the journal can then be sequentially applied, thus achieving 
