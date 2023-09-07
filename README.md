@@ -2,7 +2,7 @@
 
 # Mycelite
 
-Mycelite implements physical single-master replication for SQLite. 
+Mycelite implements physical, single-writer replication for SQLite. 
 
 ### Technical details
 
