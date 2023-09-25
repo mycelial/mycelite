@@ -13,6 +13,7 @@ jobs:
       RUSTFLAGS: "-C target-feature=-crt-static"
       PKG_CONFIG_ALLOW_CROSS: 1
       CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
     strategy:
       matrix:
