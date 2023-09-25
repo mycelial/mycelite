@@ -26,6 +26,10 @@ jobs:
             target: x86_64-unknown-linux-musl
 
           - build: linux
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+
+          - build: linux
             os: ubuntu-20.04 ## older ubuntu to avoid messing with glibc version
             target: arm-unknown-linux-gnueabihf
 
@@ -54,7 +58,7 @@ jobs:
         if: matrix.build == 'linux'
         run: |
           sudo apt update
-          sudo apt install libsqlite3-dev gcc-arm-linux-gnueabihf musl-tools -qy
+          sudo apt install libsqlite3-dev gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu musl-tools -qy
 
       - name: install packages (macos)
         if: matrix.build == 'macos'
